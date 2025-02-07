@@ -7,11 +7,9 @@
 #include "volk.h"
 #include <vulkan/vulkan_core.h>
 
-#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
-#include <vector>
 
 class Device {
     public:
@@ -68,18 +66,6 @@ class Device {
 
 
     private:
-        static constexpr std::array<const char *const, 1> m_validationLayers = {
-            "VK_LAYER_KHRONOS_validation"
-        };
-
-        static constexpr std::array<const char *const, 1> m_deviceExtensions = {
-            VK_KHR_SWAPCHAIN_EXTENSION_NAME
-        };
-
-        std::vector<const char *> m_instanceExtensions = {
-            VK_EXT_DEBUG_UTILS_EXTENSION_NAME
-        };
-
         struct QueueFamilyIndices {
             uint32_t graphicsFamily = std::numeric_limits<uint32_t>::max();
             uint32_t computeFamily = std::numeric_limits<uint32_t>::max();

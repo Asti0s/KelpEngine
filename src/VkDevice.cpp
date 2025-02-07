@@ -1,3 +1,4 @@
+#include "Config.hpp"
 #define VMA_IMPLEMENTATION
 #include "VkDevice.hpp"
 
@@ -122,7 +123,8 @@ void Device::createDescriptorPool() {
 
 void Device::createCommandPools() {
     VkCommandPoolCreateInfo commandPoolCreateInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
     };
 
     commandPoolCreateInfo.queueFamilyIndex = m_graphicsQueueData.queueFamilyIndex;
@@ -195,7 +197,7 @@ bool Device::checkForRequiredExtensions(VkPhysicalDevice device) {
     std::vector<VkExtensionProperties> availableExtensions(extensionCount);
     VK_CHECK(vkEnumerateDeviceExtensionProperties(device, VK_NULL_HANDLE, &extensionCount, availableExtensions.data()));
 
-    for (const char* requiredExtension : m_deviceExtensions) {
+    for (const char* requiredExtension : REQUIRED_DEVICE_EXTENSIONS) {
         bool found = false;
         for (const VkExtensionProperties& extension : availableExtensions) {
             if (strcmp(extension.extensionName, requiredExtension) == 0) {
@@ -378,10 +380,10 @@ void Device::createDevice() {
         .pNext = &deviceFeatures2,
         .queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
         .pQueueCreateInfos = queueCreateInfos.data(),
-        .enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size()),
-        .ppEnabledLayerNames = m_validationLayers.empty() ? nullptr : m_validationLayers.data(),
-        .enabledExtensionCount = static_cast<uint32_t>(m_deviceExtensions.size()),
-        .ppEnabledExtensionNames = m_deviceExtensions.data(),
+        .enabledLayerCount = static_cast<uint32_t>(REQUIRED_VALIDATION_LAYERS.size()),
+        .ppEnabledLayerNames = REQUIRED_VALIDATION_LAYERS.empty() ? nullptr : REQUIRED_VALIDATION_LAYERS.data(),
+        .enabledExtensionCount = static_cast<uint32_t>(REQUIRED_DEVICE_EXTENSIONS.size()),
+        .ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS.data(),
     };
 
     VK_CHECK(vkCreateDevice(m_physicalDevice, &deviceCreateInfo, VK_NULL_HANDLE, &m_device));
@@ -412,9 +414,10 @@ void Device::createInstance() {
     if (extensions == nullptr)
         throw std::runtime_error("Failed to get required instance extensions.");
 
-    m_instanceExtensions.reserve(extensionCount + m_instanceExtensions.size());
+    std::vector<const char *> instanceExtensions(REQUIRED_INSTANCE_EXTENSIONS.begin(), REQUIRED_INSTANCE_EXTENSIONS.end());
+    instanceExtensions.reserve(extensionCount + instanceExtensions.size());
     for (uint32_t i = 0; i < extensionCount; i++)
-        m_instanceExtensions.emplace_back(extensions[i]);
+        instanceExtensions.emplace_back(extensions[i]);
 
     constexpr VkApplicationInfo appInfo = {
         .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
@@ -431,10 +434,10 @@ void Device::createInstance() {
         .pNext = nullptr,
         .flags = 0,
         .pApplicationInfo = &appInfo,
-        .enabledLayerCount = static_cast<uint32_t>(m_validationLayers.size()),
-        .ppEnabledLayerNames = m_validationLayers.empty() ? nullptr : m_validationLayers.data(),
-        .enabledExtensionCount = static_cast<uint32_t>(m_instanceExtensions.size()),
-        .ppEnabledExtensionNames = m_instanceExtensions.data()
+        .enabledLayerCount = static_cast<uint32_t>(REQUIRED_VALIDATION_LAYERS.size()),
+        .ppEnabledLayerNames = REQUIRED_VALIDATION_LAYERS.empty() ? nullptr : REQUIRED_VALIDATION_LAYERS.data(),
+        .enabledExtensionCount = static_cast<uint32_t>(instanceExtensions.size()),
+        .ppEnabledExtensionNames = instanceExtensions.data()
     };
 
     VK_CHECK(vkCreateInstance(&instanceCreateInfo, VK_NULL_HANDLE, &m_instance));
