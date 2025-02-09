@@ -21,6 +21,7 @@ set(IMGUI_SOURCES
 
 # Submodules
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/fastgltf                  ${CMAKE_BINARY_DIR}/fastgltf)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/flecs                     ${CMAKE_BINARY_DIR}/flecs)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/glfw                      ${CMAKE_BINARY_DIR}/glfw)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/glm                       ${CMAKE_BINARY_DIR}/glm)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/SPIRV-Headers             ${CMAKE_BINARY_DIR}/SPIRV-Headers)
@@ -38,6 +39,7 @@ add_executable(KelpEngine ${SOURCES} ${IMGUI_SOURCES})
 # Link libraries
 target_link_libraries(KelpEngine PRIVATE
     fastgltf
+    flecs::flecs_static
     glfw
     glm
     glslang::glslang

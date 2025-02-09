@@ -1,8 +1,8 @@
 #include "Config.hpp"
 #define VMA_IMPLEMENTATION
-#include "VkDevice.hpp"
+#include "Vulkan/VkDevice.hpp"
 
-#include "VkUtils.hpp"
+#include "Vulkan/VkUtils.hpp"
 #include "Window.hpp"
 
 #include "GLFW/glfw3.h"
@@ -17,6 +17,8 @@
 #include <memory>
 #include <stdexcept>
 #include <vector>
+
+using namespace Vk;
 
 Device::Device(const std::shared_ptr<Window>& window) {
     VK_CHECK(volkInitialize());
@@ -165,8 +167,13 @@ void Device::findMaxMsaaSamples() {
 }
 
 bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+    };
+
     VkPhysicalDeviceVulkan12Features vulkan12Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext = &accelerationStructureFeatures,
     };
 
     VkPhysicalDeviceVulkan13Features vulkan13Features{
@@ -187,7 +194,8 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
         && static_cast<bool>(vulkan12Features.shaderSampledImageArrayNonUniformIndexing)
         && static_cast<bool>(vulkan12Features.runtimeDescriptorArray)
         && static_cast<bool>(vulkan13Features.dynamicRendering)
-        && static_cast<bool>(deviceFeatures2.features.samplerAnisotropy);
+        && static_cast<bool>(deviceFeatures2.features.samplerAnisotropy)
+        && static_cast<bool>(accelerationStructureFeatures.accelerationStructure);
 }
 
 bool Device::checkForRequiredExtensions(VkPhysicalDevice device) {
@@ -313,8 +321,14 @@ void Device::createDevice() {
 
 
     // Required features
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+        .accelerationStructure = VK_TRUE,
+    };
+
     VkPhysicalDeviceVulkan12Features vulkan12Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
+        .pNext = &accelerationStructureFeatures,
         .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
         .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
         .descriptorBindingPartiallyBound = VK_TRUE,

@@ -1,11 +1,13 @@
-#include "VkImage.hpp"
+#include "Vulkan/VkImage.hpp"
 
-#include "VkDevice.hpp"
-#include "VkUtils.hpp"
+#include "Vulkan/VkDevice.hpp"
+#include "Vulkan/VkUtils.hpp"
 
 #include "vk_mem_alloc.h"
 
 #include <vulkan/vulkan_core.h>
+
+using namespace Vk;
 
 Image::Image(const std::shared_ptr<Device>& device, const VkExtent3D& extent, VkImageUsageFlags usage, VkFormat format, VkImageType type, uint8_t mipLevels, VkImageAspectFlags aspectFlags) : m_device(device), m_extent(extent), m_format(format), m_mipLevels(mipLevels), m_aspectFlags(aspectFlags) {
     // Image creation

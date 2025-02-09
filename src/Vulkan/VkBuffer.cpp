@@ -1,14 +1,15 @@
-#include "VkBuffer.hpp"
+#include "Vulkan/VkBuffer.hpp"
 
-#include "VkDevice.hpp"
-#include "VkUtils.hpp"
+#include "Vulkan/VkDevice.hpp"
+#include "Vulkan/VkUtils.hpp"
 
-#define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
 #include <vulkan/vulkan_core.h>
 
 #include <cstdlib>
 #include <memory>
+
+using namespace Vk;
 
 Buffer::Buffer(const std::shared_ptr<Device>& device, size_t size, VkBufferUsageFlags bufferUsage, VmaAllocationCreateFlags allocationFlags) : m_device(device) {
     // Buffer creation

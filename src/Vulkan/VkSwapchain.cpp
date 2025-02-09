@@ -1,8 +1,8 @@
-#include "VkSwapchain.hpp"
+#include "Vulkan/VkSwapchain.hpp"
 
 #include "Config.hpp"
-#include "VkDevice.hpp"
-#include "VkUtils.hpp"
+#include "Vulkan/VkDevice.hpp"
+#include "Vulkan/VkUtils.hpp"
 
 #include "glm/ext/vector_int2.hpp"
 #include "volk.h"
@@ -13,6 +13,8 @@
 #include <limits>
 #include <memory>
 #include <vector>
+
+using namespace Vk;
 
 Swapchain::Swapchain(const std::shared_ptr<Device>& device, const glm::ivec2& size) : m_device(device) {
     createSwapchain(size);

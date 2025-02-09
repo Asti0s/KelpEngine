@@ -4,6 +4,7 @@
 -I./src
 
 -I./external/fastgltf/include
+-I./external/flecs/include
 -I./external/glfw/include
 -I./external/glm
 -I./external/glslang
