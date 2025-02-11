@@ -1,16 +1,21 @@
 #include "Window.hpp"
 
 #include "GLFW/glfw3.h"
+#include "glm/ext/vector_float2.hpp"
 #include "glm/ext/vector_int2.hpp"
 
 #include <cassert>
+#include <cstdint>
 #include <functional>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
-static std::function<void(const glm::ivec2& newSize)> resizeCallback = [](const glm::ivec2& newSize) {};        // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-static std::function<void(const glm::ivec2& position)> cursorPosCallback = [](const glm::ivec2& position) {};   // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
-static std::function<void(const glm::vec2& offset)> scrollCallback = [](const glm::vec2& offset) {};            // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+namespace {
+    std::function<void(const glm::ivec2& newSize)> resizeCallback = [](const glm::ivec2& newSize) {};        // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+    std::function<void(const glm::ivec2& position)> cursorPosCallback = [](const glm::ivec2& position) {};   // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+    std::function<void(const glm::vec2& offset)> scrollCallback = [](const glm::vec2& offset) {};            // NOLINT(cppcoreguidelines-avoid-non-const-global-variables)
+}   // namespace
 
 Window::Window(const glm::ivec2& dimensions, const char* title, bool resizable) {
     assert(!m_window);

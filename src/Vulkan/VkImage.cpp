@@ -4,8 +4,12 @@
 #include "Vulkan/VkUtils.hpp"
 
 #include "vk_mem_alloc.h"
-
 #include <vulkan/vulkan_core.h>
+
+#include <cstdint>
+#include <memory>
+#include <stdexcept>
+#include <utility>
 
 using namespace Vk;
 

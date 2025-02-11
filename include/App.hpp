@@ -6,11 +6,15 @@
 #include "Window.hpp"
 
 #include "fastgltf/types.hpp"
-#include "flecs.h"
+#include "flecs.h"  // NOLINT
+#include "flecs/addons/cpp/world.hpp"
 #include "glm/ext/matrix_float4x4.hpp"
+#include "glm/ext/vector_float3.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include "vulkan/vulkan_core.h"
 
+#include <cstdint>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <string>

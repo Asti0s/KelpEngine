@@ -5,9 +5,9 @@
 #include <vulkan/vulkan_core.h>
 
 #include <cassert>
-#include <cstdint>
-#include <stdexcept>
-#include <string>
+#include <cstdint>      // NOLINT
+#include <stdexcept>    // NOLINT
+#include <string>       // NOLINT
 
 /**
 * @brief Translate a VkResult to a string for debugging purposes.

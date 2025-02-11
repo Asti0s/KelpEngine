@@ -1,5 +1,7 @@
 #include "App.hpp"
 
+#include <cstdlib>
+#include <exception>
 #include <iostream>
 
 int main() {

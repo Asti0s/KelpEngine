@@ -7,6 +7,7 @@
 #include "glm/ext/vector_int2.hpp"
 
 #include <functional>
+#include <vector>
 
 class Window {
     public:
