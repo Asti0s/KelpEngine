@@ -1,7 +1,10 @@
 #pragma once
 
+#include "Camera.hpp"
+#include "Vulkan/VkBindlessManager.hpp"
 #include "Vulkan/VkBuffer.hpp"
 #include "Vulkan/VkDevice.hpp"
+#include "Vulkan/VkImage.hpp"
 #include "Vulkan/VkSwapchain.hpp"
 #include "Window.hpp"
 
@@ -11,6 +14,7 @@
 #include "glm/ext/matrix_float4x4.hpp"
 #include "glm/ext/vector_float3.hpp"
 #include "glm/ext/vector_int2.hpp"
+#include "glslang/Public/ShaderLang.h"
 #include "vulkan/vulkan_core.h"
 
 #include <cstdint>
@@ -32,8 +36,10 @@ class App {
 
         void run();
 
+        void handleEvents(float deltaTime);
 
-    public: // Assets
+
+    private: // Assets
         struct Vertex {
             glm::vec3 position;
             glm::vec3 normal;
@@ -59,6 +65,7 @@ class App {
             Vk::Buffer *indexBuffer;
             uint32_t indexCount;
             glm::mat4 transform;
+            VkAccelerationStructureInstanceKHR accelerationStructureInstance;
         };
 
         std::map<std::string, Mesh> m_meshes;
@@ -70,10 +77,46 @@ class App {
         void loadAssetsFromFile(const char *filePath);
 
 
+    private: // Goofy raytracing
+        struct PushConstantData {
+            glm::mat4 inverseView;
+            glm::mat4 inverseProjection;
+        };
+
+        VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_raytracingProperties{};
+        VkPipelineLayout m_pipelineLayout{};
+        VkPipeline m_raytracingPipeline{};
+
+        std::unique_ptr<Vk::Image> m_outputImage;
+        uint32_t m_outputImageBindlessId{};
+
+        void createRaytracingPipeline();
+        void createShaderBindingTable();
+
+        VkShaderModule compileShader(const std::string& path, EShLanguage stage);
+
+
+
     private:
         const std::shared_ptr<Window> m_window = std::make_shared<Window>(glm::ivec2(1280, 720), "Kelp Engine", true);
         const std::shared_ptr<Vk::Device> m_device = std::make_shared<Vk::Device>(m_window);
         Vk::Swapchain m_swapchain{m_device, m_window->getSize()};
+        Vk::BindlessManager m_bindlessManager{m_device};
 
         flecs::world m_ecs;
+
+        Camera m_camera{m_window};
+
+        std::unique_ptr<Vk::Buffer> m_topLevelAccelerationStructureBuffer;
+        VkAccelerationStructureKHR m_topLevelAccelerationStructure{};
+        uint32_t m_topLevelAccelerationStructureBindlessId{};
+
+        std::unique_ptr<Vk::Buffer> m_raygenShaderBindingTable;
+        void *m_mappedRaygenShaderBindingTable{};
+
+        std::unique_ptr<Vk::Buffer> m_missShaderBindingTable;
+        void *m_mappedMissShaderBindingTable{};
+
+        std::unique_ptr<Vk::Buffer> m_hitShaderBindingTable;
+        void *m_mappedHitShaderBindingTable{};
 };

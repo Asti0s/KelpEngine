@@ -91,7 +91,7 @@ void Device::createAllocator() {
         .device = m_device,
         .pVulkanFunctions = &vma_vulkan_func,
         .instance = m_instance,
-        .vulkanApiVersion = VK_API_VERSION_1_3,
+        .vulkanApiVersion = VK_API_VERSION_1_4,
     };
 
     VK_CHECK(vmaCreateAllocator(&allocatorInfo, &m_allocator));
@@ -171,9 +171,14 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
     };
 
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
+        .pNext = &accelerationStructureFeatures,
+    };
+
     VkPhysicalDeviceVulkan12Features vulkan12Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .pNext = &accelerationStructureFeatures,
+        .pNext = &rayTracingPipelineFeatures,
     };
 
     VkPhysicalDeviceVulkan13Features vulkan13Features{
@@ -191,11 +196,14 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
     return static_cast<bool>(vulkan12Features.bufferDeviceAddress)
         && static_cast<bool>(vulkan12Features.descriptorBindingPartiallyBound)
         && static_cast<bool>(vulkan12Features.descriptorBindingSampledImageUpdateAfterBind)
+        && static_cast<bool>(vulkan12Features.descriptorBindingStorageImageUpdateAfterBind)
         && static_cast<bool>(vulkan12Features.shaderSampledImageArrayNonUniformIndexing)
         && static_cast<bool>(vulkan12Features.runtimeDescriptorArray)
         && static_cast<bool>(vulkan13Features.dynamicRendering)
         && static_cast<bool>(deviceFeatures2.features.samplerAnisotropy)
-        && static_cast<bool>(accelerationStructureFeatures.accelerationStructure);
+        && static_cast<bool>(accelerationStructureFeatures.accelerationStructure)
+        && static_cast<bool>(accelerationStructureFeatures.descriptorBindingAccelerationStructureUpdateAfterBind)
+        && static_cast<bool>(rayTracingPipelineFeatures.rayTracingPipeline);
 }
 
 bool Device::checkForRequiredExtensions(VkPhysicalDevice device) {
@@ -324,13 +332,21 @@ void Device::createDevice() {
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
         .accelerationStructure = VK_TRUE,
+        .descriptorBindingAccelerationStructureUpdateAfterBind = VK_TRUE,
+    };
+
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
+        .pNext = &accelerationStructureFeatures,
+        .rayTracingPipeline = VK_TRUE,
     };
 
     VkPhysicalDeviceVulkan12Features vulkan12Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
-        .pNext = &accelerationStructureFeatures,
+        .pNext = &rayTracingPipelineFeatures,
         .shaderSampledImageArrayNonUniformIndexing = VK_TRUE,
         .descriptorBindingSampledImageUpdateAfterBind = VK_TRUE,
+        .descriptorBindingStorageImageUpdateAfterBind = VK_TRUE,
         .descriptorBindingPartiallyBound = VK_TRUE,
         .runtimeDescriptorArray = VK_TRUE,
         .bufferDeviceAddress = VK_TRUE,
@@ -440,7 +456,7 @@ void Device::createInstance() {
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
         .pEngineName = "No engine",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = VK_API_VERSION_1_4,
+        .apiVersion = VK_API_VERSION_1_3,
     };
 
     const VkInstanceCreateInfo instanceCreateInfo = {

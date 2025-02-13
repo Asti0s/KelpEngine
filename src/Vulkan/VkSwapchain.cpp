@@ -184,7 +184,7 @@ void Swapchain::createSyncObjects() {
     }
 }
 
-Swapchain::FrameInfo Swapchain::beginFrame() {
+void Swapchain::beginFrame() {
     // Wait for fence to signal (signaled by endFrame)
     VK_CHECK(vkWaitForFences(m_device->getHandle(), 1, &m_inFlightFences[m_currentFrameIndex], VK_TRUE, std::numeric_limits<uint64_t>::max()));
     VK_CHECK(vkResetFences(m_device->getHandle(), 1, &m_inFlightFences[m_currentFrameIndex]));
@@ -198,78 +198,14 @@ Swapchain::FrameInfo Swapchain::beginFrame() {
 
     VkCommandBuffer commandBuffer = m_renderCommandBuffers[m_currentFrameIndex];
     VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
-
-    return FrameInfo{
-        .frameIndex = m_currentFrameIndex,
-        .commandBuffer = commandBuffer,
-    };
 }
 
-VkImageView Swapchain::prepareNewImage() {
-    // Acquire image from swap chain
+void Swapchain::acquireImage() {
     VK_CHECK(vkAcquireNextImageKHR(m_device->getHandle(), m_swapchain, std::numeric_limits<uint64_t>::max(), m_imageAvailableSemaphores[m_currentFrameIndex], VK_NULL_HANDLE, &m_currentImageIndex));
-
-
-    // Transition image to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-    const VkImageMemoryBarrier barrier = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = 0,
-        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = m_images[m_currentImageIndex],
-        .subresourceRange = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        }
-    };
-
-    vkCmdPipelineBarrier(m_renderCommandBuffers[m_currentFrameIndex],
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrier
-    );
-
-    return m_imageViews[m_currentImageIndex];
 }
 
 void Swapchain::endFrame() {
     VkCommandBuffer commandBuffer = m_renderCommandBuffers[m_currentFrameIndex];
-
-
-    // Transition swapchain image to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-    const VkImageMemoryBarrier barrier = {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
-        .dstAccessMask = 0,
-        .oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = m_images[m_currentImageIndex],
-        .subresourceRange = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        }
-    };
-
-    vkCmdPipelineBarrier(m_renderCommandBuffers[m_currentFrameIndex],
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-        0,
-        0, nullptr,
-        0, nullptr,
-        1, &barrier
-    );
 
 
     // Submit command buffer to graphics queue

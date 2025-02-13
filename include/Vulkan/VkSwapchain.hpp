@@ -40,32 +40,21 @@ namespace Vk {
             */
             void resize(const glm::ivec2& size);
 
-            /**
-            * @brief Wait for new frame to be available, begin the command buffer and return it
-            * This operation has to bedone only when the rendering is ready to start
-            *
-            * @return VkCommandBuffer The command buffer to render to
-            */
-            FrameInfo beginFrame();
-
-            /**
-            * @brief Acquire the next image from the swapchain and update the current image index
-            * The synchronization is handled internally and the new image is transitioned to VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-            * This operation has to be done after beginFrame only when the rendering is about to write to the swapchain image
-            */
-            VkImageView prepareNewImage();
-
-            /**
-            * @brief End the frame by submitting the command buffer to the graphics queue and presenting the image
-            */
+            void beginFrame();
+            void acquireImage();
             void endFrame();
 
 
             /* Getters */
-            [[nodiscard]] VkSwapchainKHR    getHandle()         const noexcept { return m_swapchain; }
-            [[nodiscard]] VkFormat          getImageFormat()    const noexcept { return m_imageFormat; }
-            [[nodiscard]] const VkExtent2D& getExtent()         const noexcept { return m_extent; }
-            [[nodiscard]] uint32_t          getImageCount()     const noexcept { return m_imageCount; }
+            [[nodiscard]] VkSwapchainKHR    getHandle()                 const noexcept { return m_swapchain; }
+            [[nodiscard]] VkFormat          getImageFormat()            const noexcept { return m_imageFormat; }
+            [[nodiscard]] const VkExtent2D& getExtent()                 const noexcept { return m_extent; }
+            [[nodiscard]] uint32_t          getImageCount()             const noexcept { return m_imageCount; }
+            [[nodiscard]] uint32_t          getCurrentFrameIndex()      const noexcept { return m_currentFrameIndex; }
+            [[nodiscard]] uint32_t          getCurrentImageIndex()      const noexcept { return m_currentImageIndex; }
+            [[nodiscard]] VkCommandBuffer   getCurrentCommandBuffer()   const noexcept { return m_renderCommandBuffers[m_currentFrameIndex]; }
+            [[nodiscard]] VkImageView       getCurrentImageView()       const noexcept { return m_imageViews[m_currentImageIndex]; }
+            [[nodiscard]] VkImage           getCurrentImage()           const noexcept { return m_images[m_currentImageIndex]; }
 
 
         private:

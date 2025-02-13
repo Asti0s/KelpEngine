@@ -4,9 +4,6 @@
 #include "Vulkan/VkUtils.hpp"
 #include "glm/ext/matrix_float4x4.hpp"
 #include "glm/gtc/quaternion.hpp"
-#include <cstring>
-#include <variant>
-#include <vector>
 
 #define STB_IMAGE_IMPLEMENTATION
 #define GLM_ENABLE_EXPERIMENTAL
@@ -25,11 +22,14 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <variant>
+#include <vector>
 
 void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive, const std::string& name) {
     // Vertices loading
@@ -44,7 +44,6 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
 
     const fastgltf::Accessor& positionAccessor = asset.accessors.at(primitive.findAttribute("POSITION")->accessorIndex);
     const fastgltf::Accessor& normalAccessor = asset.accessors.at(primitive.findAttribute("NORMAL")->accessorIndex);
-    const fastgltf::Accessor& uvAccessor = asset.accessors.at(primitive.findAttribute("TEXCOORD_0")->accessorIndex);
     const fastgltf::Accessor& indicesAccessor = asset.accessors.at(primitive.indicesAccessor.value());
 
     std::vector<Vertex> vertices(positionAccessor.count);
@@ -107,6 +106,9 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
     transformBuffer.map(&data);
     memcpy(data, glm::value_ptr(transform), sizeof(glm::mat4));
     transformBuffer.unmap();
+
+
+
 
 
 
@@ -216,6 +218,10 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
 
 
 
+
+
+
+
     vkEndCommandBuffer(commandBuffer);
 
     const VkSubmitInfo submitInfo = {
@@ -244,7 +250,7 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
 }
 
 void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform) {
-    glm::mat4 localTransform = std::visit(fastgltf::visitor {
+    const glm::mat4 localTransform = std::visit(fastgltf::visitor {
         [&](const fastgltf::math::fmat4x4& matrix) -> glm::mat4 {
             return glm::make_mat4x4(matrix.data()) * parentTransform;
         },
@@ -279,6 +285,32 @@ void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::As
 
             Mesh& newMesh = m_meshes.at(meshName);
 
+
+
+
+            // AS instance creation
+            const VkTransformMatrixKHR transformMatrix = {
+                .matrix = {
+                    {localTransform[0][0], localTransform[1][0], localTransform[2][0], localTransform[3][0]},
+                    {localTransform[0][1], localTransform[1][1], localTransform[2][1], localTransform[3][1]},
+                    {localTransform[0][2], localTransform[1][2], localTransform[2][2], localTransform[3][2]},
+                },
+            };
+
+            const VkAccelerationStructureInstanceKHR instance{
+                .transform = transformMatrix,
+                .instanceCustomIndex = 0,
+                .mask = 0xFF,
+                .instanceShaderBindingTableRecordOffset = 0,
+                .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
+                .accelerationStructureReference = newMesh.accelerationStructure.deviceAddress,
+            };
+
+
+
+
+
+
             const flecs::entity entity = m_ecs.entity()
                 .insert([&](MeshComponent& meshComponent) {
                     meshComponent = {
@@ -286,6 +318,7 @@ void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::As
                         .indexBuffer = &newMesh.indexBuffer,
                         .indexCount = newMesh.indexCount,
                         .transform = localTransform,
+                        .accelerationStructureInstance = instance,
                     };
                 });
         }
@@ -302,6 +335,135 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
         const fastgltf::Node& node = asset.nodes.at(nodeIndice);
         loadGltfNode(filePath, asset, node);
     }
+
+
+
+    // BLAS instance array creation
+    std::vector<VkAccelerationStructureInstanceKHR> instances(m_ecs.query<MeshComponent>().count());
+    m_ecs.query<MeshComponent>().each([&](MeshComponent& meshComponent) {
+        instances.push_back(meshComponent.accelerationStructureInstance);
+    });
+
+    Vk::Buffer instancesBuffer = Vk::Buffer(m_device, instances.size() * sizeof(VkAccelerationStructureInstanceKHR), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    void *data = nullptr;
+    instancesBuffer.map(&data);
+    memcpy(data, instances.data(), instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
+    instancesBuffer.unmap();
+
+
+
+    // TLAS get sizes
+    const VkAccelerationStructureGeometryKHR accelerationStructureGeometry{
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
+        .geometryType = VK_GEOMETRY_TYPE_INSTANCES_KHR,
+        .geometry = {
+            .instances = {
+                .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_INSTANCES_DATA_KHR,
+                .arrayOfPointers = VK_FALSE,
+                .data = {
+                    .deviceAddress = instancesBuffer.getDeviceAddress(),
+                },
+            },
+        },
+        .flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
+    };
+
+    const VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+        .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+        .geometryCount = 1,
+        .pGeometries = &accelerationStructureGeometry,
+    };
+
+    const uint32_t numInstances = static_cast<uint32_t>(instances.size());
+
+    VkAccelerationStructureBuildSizesInfoKHR accelerationStructureBuildSizesInfo{
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR,
+    };
+    vkGetAccelerationStructureBuildSizesKHR(
+        m_device->getHandle(),
+        VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR,
+        &accelerationStructureBuildGeometryInfo,
+        &numInstances,
+        &accelerationStructureBuildSizesInfo);
+
+
+
+    // TLAS creation
+    m_topLevelAccelerationStructureBuffer = std::make_unique<Vk::Buffer>(m_device, accelerationStructureBuildSizesInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
+
+    VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
+        .buffer = m_topLevelAccelerationStructureBuffer->getHandle(),
+        .size = accelerationStructureBuildSizesInfo.accelerationStructureSize,
+        .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+    };
+    VK_CHECK(vkCreateAccelerationStructureKHR(m_device->getHandle(), &accelerationStructureCreateInfo, nullptr, &m_topLevelAccelerationStructure));
+
+
+
+
+    // TLAS build
+    const Vk::Buffer scratchBuffer = Vk::Buffer(m_device, accelerationStructureBuildSizesInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
+
+    const VkAccelerationStructureBuildGeometryInfoKHR accelerationBuildGeometryInfo{
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
+        .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
+        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+        .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+        .dstAccelerationStructure = m_topLevelAccelerationStructure,
+        .geometryCount = 1,
+        .pGeometries = &accelerationStructureGeometry,
+        .scratchData {
+            .deviceAddress = scratchBuffer.getDeviceAddress(),
+        },
+    };
+
+
+    VkAccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo{
+        .primitiveCount = numInstances,
+        .primitiveOffset = 0,
+        .firstVertex = 0,
+        .transformOffset = 0,
+    };
+
+
+
+    const VkCommandBufferAllocateInfo allocInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .commandPool = m_device->getGraphicsCommandPool(),
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+
+    VkCommandBuffer commandBuffer{};
+    vkAllocateCommandBuffers(m_device->getHandle(), &allocInfo, &commandBuffer);
+
+    const VkCommandBufferBeginInfo beginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+
+    vkBeginCommandBuffer(commandBuffer, &beginInfo);
+
+    std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
+    vkCmdBuildAccelerationStructuresKHR(
+        commandBuffer,
+        1,
+        &accelerationBuildGeometryInfo,
+        accelerationBuildStructureRangeInfos.data());
+
+    vkEndCommandBuffer(commandBuffer);
+
+    const VkSubmitInfo submitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &commandBuffer,
+    };
+
+    vkQueueSubmit(m_device->getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
+    vkQueueWaitIdle(m_device->getGraphicsQueue());
 }
 
 void App::loadAssetsFromFile(const char *filePath) {
