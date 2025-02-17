@@ -2,8 +2,6 @@
 #include "Vulkan/VkBuffer.hpp"
 #include "Vulkan/VkDevice.hpp"
 #include "Vulkan/VkUtils.hpp"
-#include "glm/ext/matrix_float4x4.hpp"
-#include "glm/gtc/quaternion.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define GLM_ENABLE_EXPERIMENTAL
@@ -13,7 +11,9 @@
 #include "fastgltf/types.hpp"
 #include "fastgltf/util.hpp"
 #include "flecs/addons/cpp/entity.hpp"
+#include "glm/ext/matrix_float4x4.hpp"
 #include "glm/ext/matrix_transform.hpp"
+#include "glm/gtc/quaternion.hpp"
 #include "glm/gtc/type_ptr.hpp"
 #include "glm/gtx/string_cast.hpp"
 #include "stb_image.h"
@@ -25,6 +25,7 @@
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -344,7 +345,7 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
         instances.push_back(meshComponent.accelerationStructureInstance);
     });
 
-    Vk::Buffer instancesBuffer = Vk::Buffer(m_device, instances.size() * sizeof(VkAccelerationStructureInstanceKHR), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    const Vk::Buffer instancesBuffer = Vk::Buffer(m_device, instances.size() * sizeof(VkAccelerationStructureInstanceKHR), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
     void *data = nullptr;
     instancesBuffer.map(&data);
     memcpy(data, instances.data(), instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
@@ -393,7 +394,7 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
     // TLAS creation
     m_topLevelAccelerationStructureBuffer = std::make_unique<Vk::Buffer>(m_device, accelerationStructureBuildSizesInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
 
-    VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{
+    const VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
         .buffer = m_topLevelAccelerationStructureBuffer->getHandle(),
         .size = accelerationStructureBuildSizesInfo.accelerationStructureSize,

@@ -7,6 +7,7 @@
 
 #include "Camera.hpp"
 
+#include "GLFW/glfw3.h"
 #include "Window.hpp"
 
 #define GLM_FORCE_RADIANS
@@ -18,7 +19,9 @@
 #include "glm/geometric.hpp"
 #include "glm/trigonometric.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <memory>
 
 Camera::Camera(const std::shared_ptr<Window>& window) : m_window(window) {
 }
@@ -60,12 +63,9 @@ void Camera::update(float deltaTime) noexcept {
         yOffset *= sensitivity;
 
         m_yaw += xOffset;
-        m_pitch -= yOffset;
 
-        if (m_pitch > 89.0)
-            m_pitch = 89.0;
-        if (m_pitch < -89.0)
-            m_pitch = -89.0;
+        m_pitch -= yOffset;
+        m_pitch = std::max(-89.F, std::min(89.F, m_pitch));
 
         const glm::vec3 direction = {
             cos(glm::radians(m_yaw)) * cos(glm::radians(m_pitch)),

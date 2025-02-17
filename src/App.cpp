@@ -5,7 +5,9 @@
 #include "Vulkan/VkSwapchain.hpp"
 #include "Vulkan/VkUtils.hpp"
 
+#include "GLFW/glfw3.h"
 #include "glm/ext/vector_int2.hpp"
+#include "glm/matrix.hpp"
 #include "glslang/MachineIndependent/Versions.h"
 #include "glslang/Public/ResourceLimits.h"
 #include "glslang/Public/ShaderLang.h"
@@ -13,10 +15,14 @@
 #include <vulkan/vulkan_core.h>
 
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <fstream>
+#include <iterator>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -24,7 +30,7 @@
 App::App() {
     auto prepareOutputImage = [&](const std::unique_ptr<Vk::Image>& outputImage) {
         // Command buffer creation
-        VkCommandBufferAllocateInfo commandBufferAllocateInfo{
+        const VkCommandBufferAllocateInfo commandBufferAllocateInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .commandPool = m_device->getGraphicsCommandPool(),
             .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
@@ -34,7 +40,7 @@ App::App() {
         VkCommandBuffer commandBuffer{};
         VK_CHECK(vkAllocateCommandBuffers(m_device->getHandle(), &commandBufferAllocateInfo, &commandBuffer));
 
-        VkCommandBufferBeginInfo commandBufferBeginInfo{
+        const VkCommandBufferBeginInfo commandBufferBeginInfo{
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         };
@@ -55,7 +61,7 @@ App::App() {
 
         // Submit command buffer
         VK_CHECK(vkEndCommandBuffer(commandBuffer));
-        VkSubmitInfo submitInfo{
+        const VkSubmitInfo submitInfo{
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .commandBufferCount = 1,
             .pCommandBuffers = &commandBuffer,
@@ -115,7 +121,7 @@ App::~App() {
     vkDestroyPipelineLayout(m_device->getHandle(), m_pipelineLayout, VK_NULL_HANDLE);
 }
 
-size_t align(size_t value, size_t alignment) {
+static size_t align(size_t value, size_t alignment) {   // NOLINT
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
@@ -286,7 +292,7 @@ VkShaderModule App::compileShader(const std::string& path, EShLanguage stage) {
 
 
     // Shader module creation
-    VkShaderModuleCreateInfo shaderModuleCreateInfo{
+    const VkShaderModuleCreateInfo shaderModuleCreateInfo{
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
         .codeSize = spirvCode.size() * sizeof(uint32_t),
         .pCode = spirvCode.data(),
@@ -402,7 +408,7 @@ void App::run() {
 
 
         // Copy output image to swapchain image
-        VkImageCopy imageCopy{
+        const VkImageCopy imageCopy{
             .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
             .srcOffset = { 0, 0, 0 },
             .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
