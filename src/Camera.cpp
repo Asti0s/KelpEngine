@@ -7,11 +7,11 @@
 
 #include "Camera.hpp"
 
-#include "GLFW/glfw3.h"
 #include "Window.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include "GLFW/glfw3.h"
 #include "glm/ext/matrix_clip_space.hpp"
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/ext/vector_float3.hpp"
@@ -35,7 +35,6 @@ void Camera::resetMousePosition() noexcept {
 }
 
 void Camera::setPerspective(float fov, float aspect, float near, float far) noexcept {
-    m_projectionMatrix = {};
     m_projectionMatrix = glm::perspective(glm::radians(fov), aspect, near, far);
 }
 

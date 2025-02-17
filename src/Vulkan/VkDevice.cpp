@@ -1,7 +1,7 @@
-#include "Config.hpp"
-#define VMA_IMPLEMENTATION
 #include "Vulkan/VkDevice.hpp"
 
+#define VMA_IMPLEMENTATION
+#include "Config.hpp"
 #include "Vulkan/VkUtils.hpp"
 #include "Window.hpp"
 
