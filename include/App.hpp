@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Camera.hpp"
-#include "Vulkan/VkBindlessManager.hpp"
+#include "DescriptorManager.hpp"
 #include "Vulkan/VkBuffer.hpp"
 #include "Vulkan/VkDevice.hpp"
 #include "Vulkan/VkImage.hpp"
@@ -9,9 +9,8 @@
 #include "Window.hpp"
 
 #include "fastgltf/types.hpp"
-#include "flecs.h"  // NOLINT
-#include "flecs/addons/cpp/world.hpp"
 #include "glm/ext/matrix_float4x4.hpp"
+#include "glm/ext/vector_float2.hpp"
 #include "glm/ext/vector_float3.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include "glslang/Public/ShaderLang.h"
@@ -22,6 +21,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 class App {
     public:
@@ -43,6 +43,7 @@ class App {
         struct Vertex {
             glm::vec3 position;
             glm::vec3 normal;
+            glm::vec2 uv;
         };
 
         struct AccelerationStructure {
@@ -51,30 +52,48 @@ class App {
             Vk::Buffer buffer;
         };
 
-        struct Mesh {
+        struct Primitive {
             Vk::Buffer vertexBuffer;
-            VkDeviceAddress vertexBufferDeviceAddress;
             Vk::Buffer indexBuffer;
-            VkDeviceAddress indexBufferDeviceAddress;
             uint32_t indexCount;
             AccelerationStructure accelerationStructure;
         };
 
-        struct MeshComponent {
-            Vk::Buffer *vertexBuffer;
-            Vk::Buffer *indexBuffer;
-            uint32_t indexCount;
-            glm::mat4 transform;
-            VkAccelerationStructureInstanceKHR accelerationStructureInstance;
+        struct Mesh {
+            std::vector<Primitive> primitives;
         };
 
-        std::map<std::string, Mesh> m_meshes;
+        struct MeshInstance {
+            Mesh *mesh;
+            std::vector<VkAccelerationStructureInstanceKHR> instances;
+        };
 
-        void loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive, const std::string& name);
+        std::vector<Mesh> m_meshes;
+        std::vector<MeshInstance> m_meshInstances;
+
+        Primitive loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive);
+        void loadMeshes(fastgltf::Asset& asset);
+
         void loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform = glm::mat4(1));
         void loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene);
 
         void loadAssetsFromFile(const char *filePath);
+
+
+
+        struct Texture {
+            Vk::Image *image;
+            VkSampler *sampler;
+            uint32_t bindlessId;
+        };
+        std::vector<Vk::Image> m_images;
+        std::vector<VkSampler> m_samplers;
+        std::vector<Texture> m_textures;
+
+        Vk::Image loadImage(uint8_t *data, const glm::ivec2& size);
+        void loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset);
+        void loadSamplers(const fastgltf::Asset& asset);
+        void loadTextures(fastgltf::Asset& asset);
 
 
     private: // Goofy raytracing
@@ -101,9 +120,7 @@ class App {
         const std::shared_ptr<Window> m_window = std::make_shared<Window>(glm::ivec2(1280, 720), "Kelp Engine", true);
         const std::shared_ptr<Vk::Device> m_device = std::make_shared<Vk::Device>(m_window);
         Vk::Swapchain m_swapchain{m_device, m_window->getSize()};
-        Vk::BindlessManager m_bindlessManager{m_device};
-
-        flecs::world m_ecs;
+        DescriptorManager m_descriptorManager{m_device};
 
         Camera m_camera{m_window};
 

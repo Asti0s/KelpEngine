@@ -1,4 +1,4 @@
-#include "Vulkan/VkBindlessManager.hpp"
+#include "DescriptorManager.hpp"
 
 #include "Vulkan/VkDevice.hpp"
 #include "Vulkan/VkUtils.hpp"
@@ -11,19 +11,17 @@
 #include <cstdint>
 #include <memory>
 
-using namespace Vk;
-
-BindlessManager::BindlessManager(const std::shared_ptr<Device>& device) : m_device(device) {
+DescriptorManager::DescriptorManager(const std::shared_ptr<Vk::Device>& device) : m_device(device) {
     createDescriptorSetLayout();
     createDescriptorSet();
 }
 
-BindlessManager::~BindlessManager() {
+DescriptorManager::~DescriptorManager() {
     m_device->waitIdle();
     vkDestroyDescriptorSetLayout(m_device->getHandle(), m_descriptorSetLayout, nullptr);
 }
 
-uint32_t BindlessManager::storeImage(VkImageView imageView) {
+uint32_t DescriptorManager::storeImage(VkImageView imageView) {
     const VkDescriptorImageInfo imageInfo{
         .imageView = imageView,
         .imageLayout = VK_IMAGE_LAYOUT_GENERAL
@@ -45,7 +43,7 @@ uint32_t BindlessManager::storeImage(VkImageView imageView) {
     return m_storageImageCount - 1;
 }
 
-uint32_t BindlessManager::storeSampledImage(VkImageView imageView, VkSampler sampler) {
+uint32_t DescriptorManager::storeSampledImage(VkImageView imageView, VkSampler sampler) {
     const VkDescriptorImageInfo imageInfo{
         .sampler = sampler,
         .imageView = imageView,
@@ -68,7 +66,7 @@ uint32_t BindlessManager::storeSampledImage(VkImageView imageView, VkSampler sam
     return m_combinedImageSamplerCount - 1;
 }
 
-uint32_t BindlessManager::storeAccelerationStructure(VkAccelerationStructureKHR accelerationStructure) {
+void DescriptorManager::storeAccelerationStructure(VkAccelerationStructureKHR accelerationStructure) {
     const VkWriteDescriptorSetAccelerationStructureKHR accelerationStructureInfo{
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
         .accelerationStructureCount = 1,
@@ -80,18 +78,15 @@ uint32_t BindlessManager::storeAccelerationStructure(VkAccelerationStructureKHR 
         .pNext = &accelerationStructureInfo,
         .dstSet = m_descriptorSet,
         .dstBinding = ACCELERATION_STRUCTURE_BINDING,
-        .dstArrayElement = m_accelerationStructureCount,
+        .dstArrayElement = 0,
         .descriptorCount = 1,
         .descriptorType = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
     };
 
     vkUpdateDescriptorSets(m_device->getHandle(), 1, &write, 0, nullptr);
-
-    m_accelerationStructureCount++;
-    return m_accelerationStructureCount - 1;
 }
 
-void BindlessManager::createDescriptorSet() {
+void DescriptorManager::createDescriptorSet() {
     const VkDescriptorSetAllocateInfo allocInfo = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
         .descriptorPool = m_device->getDescriptorPool(),
@@ -102,7 +97,7 @@ void BindlessManager::createDescriptorSet() {
     VK_CHECK(vkAllocateDescriptorSets(m_device->getHandle(), &allocInfo, &m_descriptorSet));
 }
 
-void BindlessManager::createDescriptorSetLayout() {
+void DescriptorManager::createDescriptorSetLayout() {
     constexpr uint8_t descriptorCount = 3;
     constexpr std::array<VkDescriptorType, descriptorCount> types{
         VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,

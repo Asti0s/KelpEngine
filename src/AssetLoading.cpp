@@ -2,6 +2,7 @@
 
 #include "Vulkan/VkBuffer.hpp"
 #include "Vulkan/VkDevice.hpp"
+#include "Vulkan/VkImage.hpp"
 #include "Vulkan/VkUtils.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -11,7 +12,6 @@
 #include "fastgltf/tools.hpp"
 #include "fastgltf/types.hpp"
 #include "fastgltf/util.hpp"
-#include "flecs/addons/cpp/entity.hpp"
 #include "glm/ext/matrix_float4x4.hpp"
 #include "glm/ext/matrix_transform.hpp"
 #include "glm/gtc/quaternion.hpp"
@@ -27,25 +27,208 @@
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <variant>
 #include <vector>
 
-void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive, const std::string& name) {
+Vk::Image App::loadImage(uint8_t *data, const glm::ivec2& size) {
+    // Image creation
+    const int mipLevels = static_cast<int>(std::floor(std::log2(std::max(size.x, size.y)))) + 1;
+    Vk::Image image = Vk::Image(m_device, VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, mipLevels);
+
+    // Staging buffer creation
+    Vk::Buffer stagingBuffer = Vk::Buffer(m_device, static_cast<size_t>(size.x * size.y) * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    void *stagingData = nullptr;
+    stagingBuffer.map(&stagingData);
+    memcpy(stagingData, data, static_cast<size_t>(size.x * size.y) * 4);
+    stagingBuffer.unmap();
+
+    // Transfer from staging buffer to image & mipmap generation
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics); {
+        image.cmdImagebarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+        image.cmdCopyFromBuffer(commandBuffer, stagingBuffer.getHandle());
+        image.cmdGenerateMipmaps(commandBuffer);
+    } m_device->endSingleTimeCommands(Vk::Device::QueueType::Graphics, commandBuffer);
+
+    // Cleanup
+    stbi_image_free(data);
+
+    return std::move(image);
+}
+
+void App::loadSamplers(const fastgltf::Asset& asset) {
+    m_samplers.reserve(asset.samplers.size());
+
+    constexpr auto gltfToVkFilter = [](std::optional<fastgltf::Filter> filter) -> VkFilter {
+        if (!filter.has_value())
+            return VK_FILTER_NEAREST;
+
+        switch (filter.value()) {
+            case fastgltf::Filter::Linear:
+            case fastgltf::Filter::LinearMipMapNearest:
+            case fastgltf::Filter::LinearMipMapLinear:
+                return VK_FILTER_LINEAR;
+            case fastgltf::Filter::Nearest:
+            case fastgltf::Filter::NearestMipMapNearest:
+            case fastgltf::Filter::NearestMipMapLinear:
+            default:
+                return VK_FILTER_NEAREST;
+        }
+    };
+
+    constexpr auto gltfToVkMipmapMode = [](std::optional<fastgltf::Filter> filter) -> VkSamplerMipmapMode {
+        if (!filter.has_value())
+            return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+
+        switch (filter.value()) {
+            case fastgltf::Filter::Linear:
+            case fastgltf::Filter::NearestMipMapLinear:
+            case fastgltf::Filter::LinearMipMapLinear:
+                return VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            case fastgltf::Filter::Nearest:
+            case fastgltf::Filter::NearestMipMapNearest:
+            case fastgltf::Filter::LinearMipMapNearest:
+            default:
+                return VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        }
+    };
+
+    constexpr auto gltfToVkSamplerAddressMode = [](fastgltf::Wrap wrap) -> VkSamplerAddressMode {
+        switch (wrap) {
+            case fastgltf::Wrap::ClampToEdge:
+                return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            case fastgltf::Wrap::MirroredRepeat:
+                return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+            case fastgltf::Wrap::Repeat:
+            default:
+                return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        }
+    };
+
+    for (const auto& sampler : asset.samplers) {
+        const VkSamplerCreateInfo samplerCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+            .magFilter = gltfToVkFilter(sampler.magFilter),
+            .minFilter = gltfToVkFilter(sampler.minFilter),
+            .mipmapMode = gltfToVkMipmapMode(sampler.minFilter),
+            .addressModeU = gltfToVkSamplerAddressMode(sampler.wrapS),
+            .addressModeV = gltfToVkSamplerAddressMode(sampler.wrapT),
+            .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+            .mipLodBias = 0,
+            .anisotropyEnable = VK_TRUE,
+            .maxAnisotropy = m_device->getProperties().limits.maxSamplerAnisotropy,
+            .compareEnable = VK_FALSE,
+            .compareOp = VK_COMPARE_OP_ALWAYS,
+            .minLod = 0,
+            .maxLod = VK_LOD_CLAMP_NONE,
+            .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK,
+            .unnormalizedCoordinates = VK_FALSE,
+        };
+
+        VkSampler vkSampler = VK_NULL_HANDLE;
+        VK_CHECK(vkCreateSampler(m_device->getHandle(), &samplerCreateInfo, nullptr, &vkSampler));
+
+        m_samplers.push_back(vkSampler);
+    }
+}
+
+void App::loadTextures(fastgltf::Asset& asset) {
+    m_textures.reserve(asset.textures.size());
+
+    for (const fastgltf::Texture& texture : asset.textures) {
+        Vk::Image& image = m_images[texture.imageIndex.value()];
+        VkSampler& sampler = m_samplers[texture.samplerIndex.value()];
+
+        m_textures.push_back(Texture {
+            .image = &image,
+            .sampler = &sampler,
+            .bindlessId = m_descriptorManager.storeSampledImage(image.getImageView(), sampler),
+        });
+    }
+}
+
+void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset) {
+    m_images.reserve(asset.images.size());
+
+    for (uint32_t i = 0; i < asset.images.size(); i++) {
+        std::clog << "Loading images: " << static_cast<float>(i) / static_cast<float>(asset.images.size()) * 100 << "%" << std::endl;
+        fastgltf::Image& image = asset.images[i];
+
+        glm::ivec2 size;
+        int nrChannels = 0;
+
+        m_images.push_back(std::visit(fastgltf::visitor {
+            [](auto& /* UNUSED */) -> Vk::Image {
+                throw std::runtime_error("Failed to load image: unknown image type");
+            },
+            [&](fastgltf::sources::BufferView& imageBufferView) -> Vk::Image {
+                const fastgltf::BufferView& bufferView = asset.bufferViews[imageBufferView.bufferViewIndex];
+                fastgltf::Buffer& buffer = asset.buffers[bufferView.bufferIndex];
+
+                return std::visit(fastgltf::visitor {
+                    [](auto& /* UNUSED */) -> Vk::Image {
+                        throw std::runtime_error("Failed to load image buffer view: unknown buffer type");
+                    },
+                    [&](fastgltf::sources::Array& array) -> Vk::Image {
+                        uint8_t *data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(array.bytes.data() + bufferView.byteOffset), static_cast<int>(bufferView.byteLength), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
+                        if(data == nullptr)
+                            throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
+
+                        return loadImage(data, size);
+                    }
+                }, buffer.data);
+            },
+            [&](fastgltf::sources::Array& array) -> Vk::Image {
+                uint8_t *data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(array.bytes.data()), static_cast<int>(array.bytes.size()), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
+                if(data == nullptr)
+                    throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
+
+                return loadImage(data, size);
+            },
+            [&](fastgltf::sources::URI& texturePath) -> Vk::Image {
+                const std::filesystem::path path = std::filesystem::path(filePath).parent_path().append(texturePath.uri.c_str());
+                if (!std::filesystem::exists(path))
+                    throw std::runtime_error("Error loading \"" + path.string() + "\": file not found");
+
+                uint8_t *data = stbi_load(path.string().c_str(), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
+                if (data == nullptr)
+                    throw std::runtime_error("Failed to load texture \"" + path.string() + "\": " + std::string(stbi_failure_reason()));
+
+                return loadImage(data, size);
+            },
+        }, image.data));
+    }
+}
+
+void App::loadMeshes(fastgltf::Asset& asset) {
+    Mesh newMesh;
+    newMesh.primitives.reserve(asset.meshes.size());
+
+    for (const auto& mesh : asset.meshes) {
+        for (const auto& primitive : mesh.primitives)
+            newMesh.primitives.push_back(loadPrimitive(asset, primitive));
+
+        m_meshes.push_back(std::move(newMesh));
+    }
+}
+
+App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive) {
     // Vertices loading
     if (primitive.findAttribute("POSITION") == nullptr)
-        return;
+        throw std::runtime_error("Failed to load primitive: missing POSITION attribute");
 
     if (primitive.findAttribute("TEXCOORD_0") == nullptr)
-        return;
+        throw std::runtime_error("Failed to load primitive: missing TEXCOORD_0 attribute");
 
     if (primitive.findAttribute("NORMAL") == nullptr)
-        return;
+        throw std::runtime_error("Failed to load primitive: missing NORMAL attribute");
 
     const fastgltf::Accessor& positionAccessor = asset.accessors.at(primitive.findAttribute("POSITION")->accessorIndex);
     const fastgltf::Accessor& normalAccessor = asset.accessors.at(primitive.findAttribute("NORMAL")->accessorIndex);
+    const fastgltf::Accessor& uvAccessor = asset.accessors.at(primitive.findAttribute("TEXCOORD_0")->accessorIndex);
     const fastgltf::Accessor& indicesAccessor = asset.accessors.at(primitive.indicesAccessor.value());
 
     std::vector<Vertex> vertices(positionAccessor.count);
@@ -59,59 +242,40 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
         vertices[index].normal = {value.x(), value.y(), value.z()};
     });
 
+    fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec2>(asset, uvAccessor, [&](const fastgltf::math::fvec2& value, size_t index) {
+        vertices[index].uv = {value.x(), value.y()};
+    });
+
     fastgltf::iterateAccessorWithIndex<uint32_t>(asset, indicesAccessor, [&](const uint32_t& value, size_t index) {
         indices[index] = value;
     });
 
 
-    // Mesh creation
+    // Buffers creation
     Vk::Buffer vertexBuffer = Vk::Buffer(m_device, vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    const VkDeviceAddress vertexBufferDeviceAddress = vertexBuffer.getDeviceAddress();
-
     Vk::Buffer indexBuffer = Vk::Buffer(m_device, indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-    const VkDeviceAddress indexBufferDeviceAddress = indexBuffer.getDeviceAddress();
 
-    const Vk::Buffer transformBuffer = Vk::Buffer(m_device, sizeof(glm::mat4), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
-    const VkDeviceAddress transformBufferDeviceAddress = transformBuffer.getDeviceAddress();
 
-    const VkCommandBufferAllocateInfo allocInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = m_device->getGraphicsCommandPool(),
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-
-    VkCommandBuffer commandBuffer{};
-    vkAllocateCommandBuffers(m_device->getHandle(), &allocInfo, &commandBuffer);
-
-    const VkCommandBufferBeginInfo beginInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-    };
-
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
+    // Staging buffers creation
     const Vk::Buffer vertexStagingBuffer = Vk::Buffer(m_device, vertices.size() * sizeof(Vertex), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    const Vk::Buffer indexStagingBuffer = Vk::Buffer(m_device, indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+
+
+    // Transfer to staging buffers
     void *data = nullptr;
     vertexStagingBuffer.map(&data);
     memcpy(data, vertices.data(), vertices.size() * sizeof(Vertex));
     vertexStagingBuffer.unmap();
-    vertexBuffer.copyFrom(commandBuffer, vertexStagingBuffer.getHandle(), vertices.size() * sizeof(Vertex));
 
-    const Vk::Buffer indexStagingBuffer = Vk::Buffer(m_device, indices.size() * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
     indexStagingBuffer.map(&data);
     memcpy(data, indices.data(), indices.size() * sizeof(uint32_t));
     indexStagingBuffer.unmap();
+
+
+    // Transfer from staging buffers to buffers
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics);
+    vertexBuffer.copyFrom(commandBuffer, vertexStagingBuffer.getHandle(), vertices.size() * sizeof(Vertex));
     indexBuffer.copyFrom(commandBuffer, indexStagingBuffer.getHandle(), indices.size() * sizeof(uint32_t));
-
-    glm::mat4 transform = glm::mat4(1);
-    transformBuffer.map(&data);
-    memcpy(data, glm::value_ptr(transform), sizeof(glm::mat4));
-    transformBuffer.unmap();
-
-
-
-
 
 
     // Acceleration structure get sizes
@@ -123,16 +287,13 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
                 .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
                 .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
                 .vertexData = {
-                    .deviceAddress = vertexBufferDeviceAddress,
+                    .deviceAddress = vertexBuffer.getDeviceAddress(),
                 },
                 .vertexStride = sizeof(Vertex),
                 .maxVertex = static_cast<uint32_t>(vertices.size()),
                 .indexType = VK_INDEX_TYPE_UINT32,
                 .indexData = {
-                    .deviceAddress = indexBufferDeviceAddress,
-                },
-                .transformData = {
-                    .deviceAddress = transformBufferDeviceAddress,
+                    .deviceAddress = indexBuffer.getDeviceAddress(),
                 },
             },
         },
@@ -160,8 +321,6 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
         &accelerationStructureBuildSizesInfo);
 
 
-
-
     // Acceleration structure creation
     Vk::Buffer accelerationStructureBuffer = Vk::Buffer(m_device, accelerationStructureBuildSizesInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
     VkAccelerationStructureKHR accelerationStructureHandle = VK_NULL_HANDLE;
@@ -173,8 +332,6 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
         .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
     };
     VK_CHECK(vkCreateAccelerationStructureKHR(m_device->getHandle(), &accelerationStructureCreateInfo, nullptr, &accelerationStructureHandle));
-
-
 
 
     // Acceleration structure build
@@ -208,8 +365,6 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
         accelerationBuildStructureRangeInfos.data());
 
 
-
-
     // Get acceleration structure device address
     const VkAccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
@@ -218,28 +373,14 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
     const VkDeviceAddress accelerationStructureAddress = vkGetAccelerationStructureDeviceAddressKHR(m_device->getHandle(), &accelerationDeviceAddressInfo);
 
 
+    // Submit command buffer
+    m_device->endSingleTimeCommands(Vk::Device::QueueType::Graphics, commandBuffer);
 
 
-
-
-
-
-    vkEndCommandBuffer(commandBuffer);
-
-    const VkSubmitInfo submitInfo = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &commandBuffer,
-    };
-
-    vkQueueSubmit(m_device->getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(m_device->getGraphicsQueue());
-
-    Mesh newMesh {
+    // New mesh creation
+    Primitive newPrimitive {
         .vertexBuffer = std::move(vertexBuffer),
-        .vertexBufferDeviceAddress = vertexBufferDeviceAddress,
         .indexBuffer = std::move(indexBuffer),
-        .indexBufferDeviceAddress = indexBufferDeviceAddress,
         .indexCount = static_cast<uint32_t>(indices.size()),
         .accelerationStructure = {
             .handle = accelerationStructureHandle,
@@ -248,82 +389,54 @@ void App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive&
         },
     };
 
-    m_meshes.insert({name, std::move(newMesh)});
+    return newPrimitive;
 }
 
 void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform) {
     const glm::mat4 localTransform = std::visit(fastgltf::visitor {
         [&](const fastgltf::math::fmat4x4& matrix) -> glm::mat4 {
-            return glm::make_mat4x4(matrix.data()) * parentTransform;
+            return parentTransform * glm::make_mat4x4(matrix.data());
         },
         [&](const fastgltf::TRS& transform) -> glm::mat4 {
-            return glm::translate(glm::mat4(1), {transform.translation.x(), transform.translation.y(), transform.translation.z()})
-                * glm::mat4_cast(glm::quat(transform.rotation.x(), transform.rotation.y(), transform.rotation.z(), transform.rotation.w()))
-                * glm::scale(glm::mat4(1), {transform.scale.x(), transform.scale.y(), transform.scale.z()})
-                * parentTransform;
+            return parentTransform
+                * glm::translate(glm::mat4(1), {transform.translation.x(), transform.translation.y(), transform.translation.z()})
+                * glm::mat4_cast(glm::quat(transform.rotation.w(), transform.rotation.x(), transform.rotation.y(), transform.rotation.z()))
+                * glm::scale(glm::mat4(1), {transform.scale.x(), transform.scale.y(), transform.scale.z()});
         },
         [&](const auto& /* UNUSED */) -> glm::mat4 {
             throw std::runtime_error("Failed to load node: unknown node type");
         }
     }, node.transform);
 
+    const VkTransformMatrixKHR transformMatrix = {
+        .matrix = {
+            {localTransform[0][0], localTransform[1][0], localTransform[2][0], localTransform[3][0]},
+            {localTransform[0][1], localTransform[1][1], localTransform[2][1], localTransform[3][1]},
+            {localTransform[0][2], localTransform[1][2], localTransform[2][2], localTransform[3][2]}
+        },
+    };
+
     if (node.meshIndex.has_value()) {
-        const fastgltf::Mesh& mesh = asset.meshes.at(node.meshIndex.value());
+        Mesh& mesh = m_meshes.at(node.meshIndex.value());
 
-        for (int i = 0; i < mesh.primitives.size(); i++) {
-            const fastgltf::Primitive& primitive = mesh.primitives[i];
+        MeshInstance newMeshInstance {
+            .mesh = &mesh,
+        };
 
-            const std::string meshName = filePath.filename().replace_extension("").string() + "_mesh" + std::to_string(node.meshIndex.value()) + "_primitive" + std::to_string(i);
-            if (m_meshes.find(meshName) == m_meshes.end()) {
-                loadPrimitive(asset, primitive, meshName);
-            } else {
-                std::clog << "Mesh \"" << meshName << "\" already loaded" << std::endl;
-            }
-
-            if (!m_meshes.contains(meshName)) {
-                std::clog << "Warning: failed to load mesh \"" << meshName << "\"" << std::endl;
-                continue;
-            }
-
-            Mesh& newMesh = m_meshes.at(meshName);
-
-
-
-
-            // AS instance creation
-            const VkTransformMatrixKHR transformMatrix = {
-                .matrix = {
-                    {localTransform[0][0], localTransform[1][0], localTransform[2][0], localTransform[3][0]},
-                    {localTransform[0][1], localTransform[1][1], localTransform[2][1], localTransform[3][1]},
-                    {localTransform[0][2], localTransform[1][2], localTransform[2][2], localTransform[3][2]},
-                },
-            };
-
+        for (const auto& primitive : mesh.primitives) {
             const VkAccelerationStructureInstanceKHR instance{
                 .transform = transformMatrix,
                 .instanceCustomIndex = 0,
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = 0,
                 .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
-                .accelerationStructureReference = newMesh.accelerationStructure.deviceAddress,
+                .accelerationStructureReference = primitive.accelerationStructure.deviceAddress,
             };
 
-
-
-
-
-
-            const flecs::entity entity = m_ecs.entity()
-                .insert([&](MeshComponent& meshComponent) {
-                    meshComponent = {
-                        .vertexBuffer = &newMesh.vertexBuffer,
-                        .indexBuffer = &newMesh.indexBuffer,
-                        .indexCount = newMesh.indexCount,
-                        .transform = localTransform,
-                        .accelerationStructureInstance = instance,
-                    };
-                });
+            newMeshInstance.instances.push_back(instance);
         }
+
+        m_meshInstances.push_back(newMeshInstance);
     }
 
     for (const size_t childIndex : node.children) {
@@ -339,19 +452,17 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
     }
 
 
-
     // BLAS instance array creation
-    std::vector<VkAccelerationStructureInstanceKHR> instances(m_ecs.query<MeshComponent>().count());
-    m_ecs.query<MeshComponent>().each([&](MeshComponent& meshComponent) {
-        instances.push_back(meshComponent.accelerationStructureInstance);
-    });
+    std::vector<VkAccelerationStructureInstanceKHR> instances;
+    for (const MeshInstance& meshInstance : m_meshInstances)
+        for (const VkAccelerationStructureInstanceKHR& instance : meshInstance.instances)
+            instances.push_back(instance);
 
     const Vk::Buffer instancesBuffer = Vk::Buffer(m_device, instances.size() * sizeof(VkAccelerationStructureInstanceKHR), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
     void *data = nullptr;
     instancesBuffer.map(&data);
     memcpy(data, instances.data(), instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
     instancesBuffer.unmap();
-
 
 
     // TLAS get sizes
@@ -391,7 +502,6 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
         &accelerationStructureBuildSizesInfo);
 
 
-
     // TLAS creation
     m_topLevelAccelerationStructureBuffer = std::make_unique<Vk::Buffer>(m_device, accelerationStructureBuildSizesInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
 
@@ -402,8 +512,6 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
         .type = VK_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL_KHR,
     };
     VK_CHECK(vkCreateAccelerationStructureKHR(m_device->getHandle(), &accelerationStructureCreateInfo, nullptr, &m_topLevelAccelerationStructure));
-
-
 
 
     // TLAS build
@@ -422,7 +530,6 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
         },
     };
 
-
     VkAccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo{
         .primitiveCount = numInstances,
         .primitiveOffset = 0,
@@ -430,42 +537,16 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
         .transformOffset = 0,
     };
 
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics); {
+        const std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
+        vkCmdBuildAccelerationStructuresKHR(
+            commandBuffer,
+            1,
+            &accelerationBuildGeometryInfo,
+            accelerationBuildStructureRangeInfos.data());
+    } m_device->endSingleTimeCommands(Vk::Device::QueueType::Graphics, commandBuffer);
 
-
-    const VkCommandBufferAllocateInfo allocInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = m_device->getGraphicsCommandPool(),
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
-    };
-
-    VkCommandBuffer commandBuffer{};
-    vkAllocateCommandBuffers(m_device->getHandle(), &allocInfo, &commandBuffer);
-
-    const VkCommandBufferBeginInfo beginInfo = {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-    };
-
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
-
-    std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
-    vkCmdBuildAccelerationStructuresKHR(
-        commandBuffer,
-        1,
-        &accelerationBuildGeometryInfo,
-        accelerationBuildStructureRangeInfos.data());
-
-    vkEndCommandBuffer(commandBuffer);
-
-    const VkSubmitInfo submitInfo = {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &commandBuffer,
-    };
-
-    vkQueueSubmit(m_device->getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(m_device->getGraphicsQueue());
+    m_descriptorManager.storeAccelerationStructure(m_topLevelAccelerationStructure);
 }
 
 void App::loadAssetsFromFile(const char *filePath) {
@@ -501,6 +582,9 @@ void App::loadAssetsFromFile(const char *filePath) {
         throw std::runtime_error("Error loading \"" + path.string() + "\": unknown file extension");
     }
 
-    for (const auto& scene : asset.scenes)
-        loadGltfScene(filePath, asset, scene);
+    // loadSamplers(asset);
+    // loadImages(path, asset);
+    // loadTextures(asset);
+    loadMeshes(asset);
+    loadGltfScene(filePath, asset, asset.scenes[0]);
 }

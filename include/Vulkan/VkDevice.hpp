@@ -7,6 +7,7 @@
 #include "volk.h"
 #include <vulkan/vulkan_core.h>
 
+#include <array>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -14,6 +15,14 @@
 namespace Vk {
 
     class Device {
+        public:
+            enum QueueType : uint8_t {
+                Graphics = 0,
+                Transfer = 1,
+                Compute = 2
+            };
+
+
         public:
             Device(const std::shared_ptr<Window>& window);
             ~Device();
@@ -41,6 +50,10 @@ namespace Vk {
             void waitIdle() const;
 
 
+            [[nodiscard]] VkCommandBuffer beginSingleTimeCommands(QueueType queueType) const;
+            void endSingleTimeCommands(QueueType queueType, VkCommandBuffer commandBuffer) const;
+
+
             /* Getters */
             [[nodiscard]] VkInstance        getInstance()                   const noexcept { return m_instance; };
             [[nodiscard]] VkPhysicalDevice  getPhysicalDevice()             const noexcept { return m_physicalDevice; };
@@ -49,17 +62,9 @@ namespace Vk {
             [[nodiscard]] VkDescriptorPool  getDescriptorPool()             const noexcept { return m_descriptorPool; };
             [[nodiscard]] VmaAllocator      getAllocator()                  const noexcept { return m_allocator; };
 
-            [[nodiscard]] VkCommandPool     getGraphicsCommandPool()         const noexcept { return m_graphicsQueueData.commandPool; };
-            [[nodiscard]] uint32_t          getGraphicsQueueFamilyIndex()    const noexcept { return m_graphicsQueueData.queueFamilyIndex; };
-            [[nodiscard]] VkQueue           getGraphicsQueue()               const noexcept { return m_graphicsQueueData.queue; };
-
-            [[nodiscard]] VkCommandPool     getTransferCommandPool()        const noexcept { return m_transferQueueData.commandPool; };
-            [[nodiscard]] uint32_t          getTransferQueueFamilyIndex()   const noexcept { return m_transferQueueData.queueFamilyIndex; };
-            [[nodiscard]] VkQueue           getTransferQueue()              const noexcept { return m_transferQueueData.queue; };
-
-            [[nodiscard]] VkCommandPool     getComputeCommandPool()         const noexcept { return m_computeQueueData.commandPool; };
-            [[nodiscard]] uint32_t          getComputeQueueFamilyIndex()    const noexcept { return m_computeQueueData.queueFamilyIndex; };
-            [[nodiscard]] VkQueue           getComputeQueue()               const noexcept { return m_computeQueueData.queue; };
+            [[nodiscard]] VkCommandPool     getCommandPool(QueueType queueType)         const noexcept { return m_queueDatas[queueType].commandPool; };
+            [[nodiscard]] uint32_t          getQueueFamilyIndex(QueueType queueType)    const noexcept { return m_queueDatas[queueType].queueFamilyIndex; };
+            [[nodiscard]] VkQueue           getQueue(QueueType queueType)               const noexcept { return m_queueDatas[queueType].queue; };
 
             [[nodiscard]] const VkPhysicalDeviceMemoryProperties&   getMemoryProperties()           const noexcept { return m_memoryProperties; };
             [[nodiscard]] const VkPhysicalDeviceProperties&         getProperties()                 const noexcept { return m_properties; };
@@ -78,6 +83,7 @@ namespace Vk {
                 uint32_t queueFamilyIndex = 0;
                 VkQueue queue = VK_NULL_HANDLE;
                 VkCommandPool commandPool = VK_NULL_HANDLE;
+                VkCommandBuffer singleTimeCommandBuffer = VK_NULL_HANDLE;
             };
 
 
@@ -89,6 +95,7 @@ namespace Vk {
             void createCommandPools();
             void createDescriptorPool();
             void createAllocator();
+            void createSingleTimeCommandBuffers();
 
             void findPhysicalDevice();
             bool findQueueFamilies(VkPhysicalDevice device, QueueFamilyIndices& indices);
@@ -104,14 +111,13 @@ namespace Vk {
             VkSurfaceKHR m_windowSurface{};
             VkDescriptorPool m_descriptorPool{};
             VmaAllocator m_allocator{};
+            VkFence m_singleTimeCommandsFence{};
 
             VkPhysicalDeviceMemoryProperties m_memoryProperties{};
             VkPhysicalDeviceProperties m_properties{};
             VkSampleCountFlagBits m_maxMsaaSamples = VK_SAMPLE_COUNT_1_BIT;
 
-            QueueDatas m_graphicsQueueData;
-            QueueDatas m_transferQueueData;
-            QueueDatas m_computeQueueData;
+            std::array<QueueDatas, 3> m_queueDatas;
     };
 
 }   // namespace Vk

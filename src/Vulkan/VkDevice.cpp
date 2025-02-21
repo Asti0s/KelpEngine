@@ -29,12 +29,13 @@ Device::Device(const std::shared_ptr<Window>& window) {
     createDevice();
     createCommandPools();
     createDescriptorPool();
+    createSingleTimeCommandBuffers();
     findMaxMsaaSamples();
     createAllocator();
 
-    std::cout << "Graphic: " << m_graphicsQueueData.queueFamilyIndex << " " << m_graphicsQueueData.queue << " " << m_graphicsQueueData.commandPool << std::endl;
-    std::cout << "Transfer: " << m_transferQueueData.queueFamilyIndex << " " << m_transferQueueData.queue << " " << m_transferQueueData.commandPool << std::endl;
-    std::cout << "Compute: " << m_computeQueueData.queueFamilyIndex << " " << m_computeQueueData.queue << " " << m_computeQueueData.commandPool << std::endl;
+    std::cout << "Graphic: " << m_queueDatas[Graphics].queueFamilyIndex << " " << m_queueDatas[Graphics].queue << " " << m_queueDatas[Graphics].commandPool << std::endl;
+    std::cout << "Transfer: " << m_queueDatas[Transfer].queueFamilyIndex << " " << m_queueDatas[Transfer].queue << " " << m_queueDatas[Transfer].commandPool << std::endl;
+    std::cout << "Compute: " << m_queueDatas[Compute].queueFamilyIndex << " " << m_queueDatas[Compute].queue << " " << m_queueDatas[Compute].commandPool << std::endl;
 }
 
 Device::~Device() {
@@ -43,16 +44,76 @@ Device::~Device() {
         vmaDestroyAllocator(m_allocator);
         vkDestroyDescriptorPool(m_device, m_descriptorPool, VK_NULL_HANDLE);
 
-        vkDestroyCommandPool(m_device, m_graphicsQueueData.commandPool, VK_NULL_HANDLE);
-        if (m_transferQueueData.queueFamilyIndex != m_graphicsQueueData.queueFamilyIndex)
-            vkDestroyCommandPool(m_device, m_transferQueueData.commandPool, VK_NULL_HANDLE);
-        if (m_computeQueueData.queueFamilyIndex != m_graphicsQueueData.queueFamilyIndex)
-            vkDestroyCommandPool(m_device, m_computeQueueData.commandPool, VK_NULL_HANDLE);
+        vkDestroyCommandPool(m_device, m_queueDatas[Graphics].commandPool, VK_NULL_HANDLE);
+        if (m_queueDatas[Transfer].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex)
+            vkDestroyCommandPool(m_device, m_queueDatas[Transfer].commandPool, VK_NULL_HANDLE);
+        if (m_queueDatas[Compute].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex)
+            vkDestroyCommandPool(m_device, m_queueDatas[Compute].commandPool, VK_NULL_HANDLE);
 
+        vkDestroyFence(m_device, m_singleTimeCommandsFence, VK_NULL_HANDLE);
         vkDestroyDevice(m_device, VK_NULL_HANDLE);
         vkDestroySurfaceKHR(m_instance, m_windowSurface, VK_NULL_HANDLE);
         vkDestroyInstance(m_instance, VK_NULL_HANDLE);
     }
+}
+
+void Device::endSingleTimeCommands(QueueType queueType, VkCommandBuffer commandBuffer) const {
+    VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+    const VkSubmitInfo submitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &commandBuffer,
+    };
+    VK_CHECK(vkQueueSubmit(m_queueDatas[queueType].queue, 1, &submitInfo, m_singleTimeCommandsFence));
+
+    VK_CHECK(vkWaitForFences(m_device, 1, &m_singleTimeCommandsFence, VK_TRUE, std::numeric_limits<uint64_t>::max()));
+    VK_CHECK(vkResetFences(m_device, 1, &m_singleTimeCommandsFence));
+}
+
+VkCommandBuffer Device::beginSingleTimeCommands(QueueType queueType) const {
+    VkCommandBuffer commandBuffer = m_queueDatas[queueType].singleTimeCommandBuffer;
+
+    const VkCommandBufferBeginInfo beginInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+    };
+    VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
+
+    return commandBuffer;
+}
+
+void Device::createSingleTimeCommandBuffers() {
+    // Command buffer allocations
+    VkCommandBufferAllocateInfo allocInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+
+    allocInfo.commandPool = m_queueDatas[Graphics].commandPool;
+    VK_CHECK(vkAllocateCommandBuffers(m_device, &allocInfo, &m_queueDatas[Graphics].singleTimeCommandBuffer));
+
+    if (m_queueDatas[Transfer].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex) {
+        allocInfo.commandPool = m_queueDatas[Transfer].commandPool;
+        VK_CHECK(vkAllocateCommandBuffers(m_device, &allocInfo, &m_queueDatas[Transfer].singleTimeCommandBuffer));
+    } else {
+        m_queueDatas[Transfer].singleTimeCommandBuffer = m_queueDatas[Graphics].singleTimeCommandBuffer;
+    }
+
+    if (m_queueDatas[Compute].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex && m_queueDatas[Compute].queueFamilyIndex != m_queueDatas[Transfer].queueFamilyIndex) {
+        allocInfo.commandPool = m_queueDatas[Compute].commandPool;
+        VK_CHECK(vkAllocateCommandBuffers(m_device, &allocInfo, &m_queueDatas[Compute].singleTimeCommandBuffer));
+    } else {
+        m_queueDatas[Compute].singleTimeCommandBuffer = m_queueDatas[Graphics].singleTimeCommandBuffer;
+    }
+
+
+    // Fence creation
+    const VkFenceCreateInfo fenceInfo = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+    };
+    VK_CHECK(vkCreateFence(m_device, &fenceInfo, VK_NULL_HANDLE, &m_singleTimeCommandsFence));
 }
 
 void Device::createAllocator() {
@@ -129,21 +190,21 @@ void Device::createCommandPools() {
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
     };
 
-    commandPoolCreateInfo.queueFamilyIndex = m_graphicsQueueData.queueFamilyIndex;
-    VK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, VK_NULL_HANDLE, &m_graphicsQueueData.commandPool));
+    commandPoolCreateInfo.queueFamilyIndex = m_queueDatas[Graphics].queueFamilyIndex;
+    VK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, VK_NULL_HANDLE, &m_queueDatas[Graphics].commandPool));
 
-    if (m_transferQueueData.queueFamilyIndex != m_graphicsQueueData.queueFamilyIndex) {
-        commandPoolCreateInfo.queueFamilyIndex = m_transferQueueData.queueFamilyIndex;
-        VK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, VK_NULL_HANDLE, &m_transferQueueData.commandPool));
+    if (m_queueDatas[Transfer].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex) {
+        commandPoolCreateInfo.queueFamilyIndex = m_queueDatas[Transfer].queueFamilyIndex;
+        VK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, VK_NULL_HANDLE, &m_queueDatas[Transfer].commandPool));
     } else {
-        m_transferQueueData.commandPool = m_graphicsQueueData.commandPool;
+        m_queueDatas[Transfer].commandPool = m_queueDatas[Graphics].commandPool;
     }
 
-    if (m_computeQueueData.queueFamilyIndex != m_graphicsQueueData.queueFamilyIndex) {
-        commandPoolCreateInfo.queueFamilyIndex = m_computeQueueData.queueFamilyIndex;
-        VK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, VK_NULL_HANDLE, &m_computeQueueData.commandPool));
+    if (m_queueDatas[Compute].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex && m_queueDatas[Compute].queueFamilyIndex != m_queueDatas[Transfer].queueFamilyIndex) {
+        commandPoolCreateInfo.queueFamilyIndex = m_queueDatas[Compute].queueFamilyIndex;
+        VK_CHECK(vkCreateCommandPool(m_device, &commandPoolCreateInfo, VK_NULL_HANDLE, &m_queueDatas[Compute].commandPool));
     } else {
-        m_computeQueueData.commandPool = m_graphicsQueueData.commandPool;
+        m_queueDatas[Compute].commandPool = m_queueDatas[Graphics].commandPool;
     }
 }
 
@@ -369,9 +430,9 @@ void Device::createDevice() {
     QueueFamilyIndices indices;
     findQueueFamilies(m_physicalDevice, indices);
 
-    m_graphicsQueueData.queueFamilyIndex = indices.graphicsFamily;
-    m_transferQueueData.queueFamilyIndex = indices.transferFamily;
-    m_computeQueueData.queueFamilyIndex = indices.computeFamily;
+    m_queueDatas[Graphics].queueFamilyIndex = indices.graphicsFamily;
+    m_queueDatas[Transfer].queueFamilyIndex = indices.transferFamily;
+    m_queueDatas[Compute].queueFamilyIndex = indices.computeFamily;
 
 
     // Queues create infos
@@ -421,17 +482,17 @@ void Device::createDevice() {
 
 
     // Get queues
-    vkGetDeviceQueue(m_device, indices.graphicsFamily, 0, &m_graphicsQueueData.queue);
+    vkGetDeviceQueue(m_device, indices.graphicsFamily, 0, &m_queueDatas[Graphics].queue);
 
     if (indices.transferFamily != indices.graphicsFamily)
-        vkGetDeviceQueue(m_device, indices.transferFamily, 0, &m_transferQueueData.queue);
+        vkGetDeviceQueue(m_device, indices.transferFamily, 0, &m_queueDatas[Transfer].queue);
     else
-        m_transferQueueData.queue = m_graphicsQueueData.queue;
+        m_queueDatas[Transfer].queue = m_queueDatas[Graphics].queue;
 
     if (indices.computeFamily != indices.graphicsFamily)
-        vkGetDeviceQueue(m_device, indices.computeFamily, 0, &m_computeQueueData.queue);
+        vkGetDeviceQueue(m_device, indices.computeFamily, 0, &m_queueDatas[Compute].queue);
     else
-        m_computeQueueData.queue = m_graphicsQueueData.queue;
+        m_queueDatas[Compute].queue = m_queueDatas[Graphics].queue;
 }
 
 void Device::createSurface(const std::shared_ptr<Window>& window) {

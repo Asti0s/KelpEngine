@@ -32,7 +32,7 @@ Swapchain::~Swapchain() {
             vkDestroyFence(m_device->getHandle(), m_inFlightFences[i], nullptr);
         }
 
-        vkFreeCommandBuffers(m_device->getHandle(), m_device->getGraphicsCommandPool(), static_cast<uint32_t>(m_renderCommandBuffers.size()), m_renderCommandBuffers.data());
+        vkFreeCommandBuffers(m_device->getHandle(), m_device->getCommandPool(Device::Graphics), static_cast<uint32_t>(m_renderCommandBuffers.size()), m_renderCommandBuffers.data());
 
         for (VkImageView imageView : m_imageViews)
             vkDestroyImageView(m_device->getHandle(), imageView, nullptr);
@@ -56,7 +56,7 @@ void Swapchain::resize(const glm::ivec2& size) {
 void Swapchain::createRenderCommandBuffers() {
     const VkCommandBufferAllocateInfo allocInfo{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .commandPool = m_device->getGraphicsCommandPool(),
+        .commandPool = m_device->getCommandPool(Device::Graphics),
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = MAX_FRAMES_IN_FLIGHT
     };
@@ -223,7 +223,7 @@ void Swapchain::endFrame() {
     };
 
     VK_CHECK(vkEndCommandBuffer(commandBuffer));
-    VK_CHECK(vkQueueSubmit(m_device->getGraphicsQueue(), 1, &submitInfo, m_inFlightFences[m_currentFrameIndex]));
+    VK_CHECK(vkQueueSubmit(m_device->getQueue(Device::Graphics), 1, &submitInfo, m_inFlightFences[m_currentFrameIndex]));
 
 
     // Present image
@@ -236,7 +236,7 @@ void Swapchain::endFrame() {
         .pImageIndices = &m_currentImageIndex
     };
 
-    VK_CHECK(vkQueuePresentKHR(m_device->getGraphicsQueue(), &presentInfo));
+    VK_CHECK(vkQueuePresentKHR(m_device->getQueue(Device::Graphics), &presentInfo));
 
 
     // Advance frame index

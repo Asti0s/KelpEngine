@@ -28,47 +28,17 @@
 #include <vector>
 
 App::App() {
-    auto prepareOutputImage = [&](const std::unique_ptr<Vk::Image>& outputImage) {
-        // Command buffer creation
-        const VkCommandBufferAllocateInfo commandBufferAllocateInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = m_device->getGraphicsCommandPool(),
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
-        };
-
-        VkCommandBuffer commandBuffer{};
-        VK_CHECK(vkAllocateCommandBuffers(m_device->getHandle(), &commandBufferAllocateInfo, &commandBuffer));
-
-        const VkCommandBufferBeginInfo commandBufferBeginInfo{
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-        };
-
-        VK_CHECK(vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo));
-
-
-        // Transition image layout to general
-        outputImage->cmdImagebarrier(commandBuffer,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-            0,
-            VK_ACCESS_SHADER_WRITE_BIT,
-            VK_IMAGE_LAYOUT_UNDEFINED,
-            VK_IMAGE_LAYOUT_GENERAL
-        );
-
-
-        // Submit command buffer
-        VK_CHECK(vkEndCommandBuffer(commandBuffer));
-        const VkSubmitInfo submitInfo{
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &commandBuffer,
-        };
-
-        VK_CHECK(vkQueueSubmit(m_device->getGraphicsQueue(), 1, &submitInfo, VK_NULL_HANDLE));
-        VK_CHECK(vkQueueWaitIdle(m_device->getGraphicsQueue()));
+    const auto prepareOutputImage = [&](const std::unique_ptr<Vk::Image>& outputImage) {
+        VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics); {
+            outputImage->cmdImagebarrier(commandBuffer,
+                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+                0,
+                VK_ACCESS_SHADER_WRITE_BIT,
+                VK_IMAGE_LAYOUT_UNDEFINED,
+                VK_IMAGE_LAYOUT_GENERAL
+            );
+        } m_device->endSingleTimeCommands(Vk::Device::QueueType::Graphics, commandBuffer);
     };
 
     m_window->setResizeCallback([&](const glm::ivec2& size) {
@@ -78,17 +48,16 @@ App::App() {
         m_camera.setPerspective(90, static_cast<float>(size.x) / static_cast<float>(size.y), 0.01, 100);
 
         m_outputImage = std::make_unique<Vk::Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
-        m_outputImageBindlessId = m_bindlessManager.storeImage(m_outputImage->getImageView());
+        m_outputImageBindlessId = m_descriptorManager.storeImage(m_outputImage->getImageView());
         prepareOutputImage(m_outputImage);
     });
 
     m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.01, 100);
 
-    loadAssetsFromFile("../assets/sponza.glb");
-    m_topLevelAccelerationStructureBindlessId = m_bindlessManager.storeAccelerationStructure(m_topLevelAccelerationStructure);
+    loadAssetsFromFile("../assets/bistro.glb");
 
     m_outputImage = std::make_unique<Vk::Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
-    m_outputImageBindlessId = m_bindlessManager.storeImage(m_outputImage->getImageView());
+    m_outputImageBindlessId = m_descriptorManager.storeImage(m_outputImage->getImageView());
     prepareOutputImage(m_outputImage);
 
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties{
@@ -108,8 +77,11 @@ App::App() {
 App::~App() {
     m_device->waitIdle();
 
-    for (const auto& [name, mesh] : m_meshes)
-        vkDestroyAccelerationStructureKHR(m_device->getHandle(), mesh.accelerationStructure.handle, VK_NULL_HANDLE);
+    for (const auto& mesh : m_meshes)
+        for (const auto& primitive : mesh.primitives)
+            vkDestroyAccelerationStructureKHR(m_device->getHandle(), primitive.accelerationStructure.handle, VK_NULL_HANDLE);
+    for (const auto& sampler : m_samplers)
+        vkDestroySampler(m_device->getHandle(), sampler, VK_NULL_HANDLE);
 
     vkDestroyAccelerationStructureKHR(m_device->getHandle(), m_topLevelAccelerationStructure, VK_NULL_HANDLE);
 
@@ -161,7 +133,7 @@ void App::createRaytracingPipeline() {
     const VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
-        .pSetLayouts = &m_bindlessManager.getDescriptorSetLayout(),
+        .pSetLayouts = &m_descriptorManager.getDescriptorSetLayout(),
         .pushConstantRangeCount = 1,
         .pPushConstantRanges = &pushConstantRange,
     };
@@ -339,7 +311,7 @@ void App::run() {
         // Bind things
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_raytracingPipeline);
 
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1, &m_bindlessManager.getDescriptorSet(), 0, nullptr);
+        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1, &m_descriptorManager.getDescriptorSet(), 0, nullptr);
 
         const PushConstantData pushConstantData{
             .inverseView = glm::inverse(m_camera.getViewMatrix()),
