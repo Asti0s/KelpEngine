@@ -240,6 +240,7 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
     VkPhysicalDeviceVulkan12Features vulkan12Features{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
         .pNext = &rayTracingPipelineFeatures,
+        .scalarBlockLayout = VK_TRUE,
     };
 
     VkPhysicalDeviceVulkan13Features vulkan13Features{
@@ -260,6 +261,7 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
         && static_cast<bool>(vulkan12Features.descriptorBindingStorageImageUpdateAfterBind)
         && static_cast<bool>(vulkan12Features.shaderSampledImageArrayNonUniformIndexing)
         && static_cast<bool>(vulkan12Features.runtimeDescriptorArray)
+        && static_cast<bool>(vulkan12Features.scalarBlockLayout)
         && static_cast<bool>(vulkan13Features.dynamicRendering)
         && static_cast<bool>(deviceFeatures2.features.samplerAnisotropy)
         && static_cast<bool>(accelerationStructureFeatures.accelerationStructure)
@@ -410,6 +412,7 @@ void Device::createDevice() {
         .descriptorBindingStorageImageUpdateAfterBind = VK_TRUE,
         .descriptorBindingPartiallyBound = VK_TRUE,
         .runtimeDescriptorArray = VK_TRUE,
+        .scalarBlockLayout = VK_TRUE,
         .bufferDeviceAddress = VK_TRUE,
     };
 

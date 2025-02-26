@@ -24,7 +24,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <tuple>
 #include <vector>
 
 App::App() {
@@ -54,8 +53,6 @@ App::App() {
 
     m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.01, 100);
 
-    loadAssetsFromFile("../assets/bistro.glb");
-
     m_outputImage = std::make_unique<Vk::Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
     m_outputImageBindlessId = m_descriptorManager.storeImage(m_outputImage->getImageView());
     prepareOutputImage(m_outputImage);
@@ -72,6 +69,8 @@ App::App() {
 
     createRaytracingPipeline();
     createShaderBindingTable();
+
+    loadAssetsFromFile("../assets/sponza.glb");
 }
 
 App::~App() {
@@ -316,6 +315,8 @@ void App::run() {
         const PushConstantData pushConstantData{
             .inverseView = glm::inverse(m_camera.getViewMatrix()),
             .inverseProjection = glm::inverse(m_camera.getProjectionMatrix()),
+            .gpuPrimitiveInstancesBufferAddress = m_gpuPrimitiveInstancesBuffer->getDeviceAddress(),
+            .gpuMaterialsBufferAddress = m_gpuMaterials->getDeviceAddress(),
         };
         vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstantData), &pushConstantData);
 

@@ -57,6 +57,7 @@ class App {
             Vk::Buffer indexBuffer;
             uint32_t indexCount;
             AccelerationStructure accelerationStructure;
+            int materialIndex;
         };
 
         struct Mesh {
@@ -81,11 +82,22 @@ class App {
 
 
 
+        struct GpuPrimitiveInstance {
+            VkDeviceAddress vertexBufferAddress;
+            VkDeviceAddress indexBufferAddress;
+            int materialIndex;
+        };
+
+        std::vector<GpuPrimitiveInstance> m_gpuPrimitiveInstances;
+        std::unique_ptr<Vk::Buffer> m_gpuPrimitiveInstancesBuffer;
+
+
         struct Texture {
             Vk::Image *image;
             VkSampler *sampler;
             uint32_t bindlessId;
         };
+
         std::vector<Vk::Image> m_images;
         std::vector<VkSampler> m_samplers;
         std::vector<Texture> m_textures;
@@ -96,10 +108,36 @@ class App {
         void loadTextures(fastgltf::Asset& asset);
 
 
+
+        struct GpuMaterial {
+            // Textures
+            int baseColorTextureIndex;
+            int normalTextureIndex;
+            int metallicRoughnessTextureIndex;
+            int emissiveTextureIndex;
+
+            // Factors
+            glm::vec4 baseColorFactor;
+            float metallicFactor;
+            float roughnessFactor;
+            glm::vec3 emissiveFactor;
+
+            // Params
+            int alphaMode;
+            float alphaCutoff;
+        };
+
+        std::unique_ptr<Vk::Buffer> m_gpuMaterials;
+
+        void loadMaterials(const fastgltf::Asset& asset);
+
+
     private: // Goofy raytracing
         struct PushConstantData {
             glm::mat4 inverseView;
             glm::mat4 inverseProjection;
+            VkDeviceAddress gpuPrimitiveInstancesBufferAddress;
+            VkDeviceAddress gpuMaterialsBufferAddress;
         };
 
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_raytracingProperties{};

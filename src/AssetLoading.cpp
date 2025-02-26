@@ -34,6 +34,58 @@
 #include <variant>
 #include <vector>
 
+void App::loadMaterials(const fastgltf::Asset& asset) {
+    std::vector<GpuMaterial> gpuMaterials;
+    gpuMaterials.reserve(asset.materials.size());
+
+    for (const auto& material : asset.materials) {
+        GpuMaterial gpuMaterial{
+            .baseColorTextureIndex = -1,
+            .normalTextureIndex = -1,
+            .metallicRoughnessTextureIndex = -1,
+            .emissiveTextureIndex = -1,
+            .baseColorFactor = {1, 1, 1, 1},
+            .metallicFactor = 1,
+            .roughnessFactor = 1,
+            .emissiveFactor = {0, 0, 0},
+            .alphaMode = static_cast<int>(material.alphaMode),
+            .alphaCutoff = material.alphaCutoff,
+        };
+
+        if (material.pbrData.baseColorTexture.has_value()) {
+            gpuMaterial.baseColorTextureIndex = static_cast<int>(material.pbrData.baseColorTexture.value().textureIndex);
+            gpuMaterial.baseColorFactor = glm::vec4(material.pbrData.baseColorFactor.x(), material.pbrData.baseColorFactor.y(), material.pbrData.baseColorFactor.z(), material.pbrData.baseColorFactor.w());
+        }
+
+        if (material.normalTexture.has_value())
+            gpuMaterial.normalTextureIndex = static_cast<int>(material.normalTexture.value().textureIndex);
+
+        if (material.pbrData.metallicRoughnessTexture.has_value()) {
+            gpuMaterial.metallicRoughnessTextureIndex = static_cast<int>(material.pbrData.metallicRoughnessTexture.value().textureIndex);
+            gpuMaterial.metallicFactor = material.pbrData.metallicFactor;
+            gpuMaterial.roughnessFactor = material.pbrData.roughnessFactor;
+        }
+
+        if (material.emissiveTexture.has_value()) {
+            gpuMaterial.emissiveTextureIndex = static_cast<int>(material.emissiveTexture.value().textureIndex);
+            gpuMaterial.emissiveFactor = {material.emissiveFactor.x(), material.emissiveFactor.y(), material.emissiveFactor.z()};
+        }
+
+        gpuMaterials.push_back(gpuMaterial);
+    }
+
+    const Vk::Buffer gpuMaterialsStagingBuffer = Vk::Buffer(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    void *data = nullptr;
+    gpuMaterialsStagingBuffer.map(&data);
+    memcpy(data, gpuMaterials.data(), gpuMaterials.size() * sizeof(GpuMaterial));
+    gpuMaterialsStagingBuffer.unmap();
+
+    m_gpuMaterials = std::make_unique<Vk::Buffer>(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::Graphics); {
+        m_gpuMaterials->copyFrom(commandBuffer, gpuMaterialsStagingBuffer.getHandle(), gpuMaterials.size() * sizeof(GpuMaterial));
+    } m_device->endSingleTimeCommands(Vk::Device::Graphics, commandBuffer);
+}
+
 Vk::Image App::loadImage(uint8_t *data, const glm::ivec2& size) {
     // Image creation
     const int mipLevels = static_cast<int>(std::floor(std::log2(std::max(size.x, size.y)))) + 1;
@@ -387,6 +439,7 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
             .deviceAddress = accelerationStructureAddress,
             .buffer = std::move(accelerationStructureBuffer),
         },
+        .materialIndex = static_cast<int>(primitive.materialIndex.value()),
     };
 
     return newPrimitive;
@@ -426,14 +479,19 @@ void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::As
         for (const auto& primitive : mesh.primitives) {
             const VkAccelerationStructureInstanceKHR instance{
                 .transform = transformMatrix,
-                .instanceCustomIndex = 0,
+                .instanceCustomIndex = static_cast<uint32_t>(m_gpuPrimitiveInstances.size()),
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = 0,
                 .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
                 .accelerationStructureReference = primitive.accelerationStructure.deviceAddress,
             };
-
             newMeshInstance.instances.push_back(instance);
+
+            m_gpuPrimitiveInstances.push_back(GpuPrimitiveInstance {
+                .vertexBufferAddress = primitive.vertexBuffer.getDeviceAddress(),
+                .indexBufferAddress = primitive.indexBuffer.getDeviceAddress(),
+                .materialIndex = primitive.materialIndex,
+            });
         }
 
         m_meshInstances.push_back(newMeshInstance);
@@ -452,6 +510,19 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
     }
 
 
+    // Gpu primitive instances buffer creation
+    Vk::Buffer gpuPrimitiveInstancesStagingBuffer = Vk::Buffer(m_device, m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    void *data = nullptr;
+    gpuPrimitiveInstancesStagingBuffer.map(&data);
+    memcpy(data, m_gpuPrimitiveInstances.data(), m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance));
+    gpuPrimitiveInstancesStagingBuffer.unmap();
+
+    m_gpuPrimitiveInstancesBuffer = std::make_unique<Vk::Buffer>(m_device, m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics); {
+        m_gpuPrimitiveInstancesBuffer->copyFrom(commandBuffer, gpuPrimitiveInstancesStagingBuffer.getHandle(), m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance));
+    } m_device->endSingleTimeCommands(Vk::Device::QueueType::Graphics, commandBuffer);
+
+
     // BLAS instance array creation
     std::vector<VkAccelerationStructureInstanceKHR> instances;
     for (const MeshInstance& meshInstance : m_meshInstances)
@@ -459,7 +530,7 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
             instances.push_back(instance);
 
     const Vk::Buffer instancesBuffer = Vk::Buffer(m_device, instances.size() * sizeof(VkAccelerationStructureInstanceKHR), VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
-    void *data = nullptr;
+    data = nullptr;
     instancesBuffer.map(&data);
     memcpy(data, instances.data(), instances.size() * sizeof(VkAccelerationStructureInstanceKHR));
     instancesBuffer.unmap();
@@ -537,7 +608,7 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
         .transformOffset = 0,
     };
 
-    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics); {
+    commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics); {
         const std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
         vkCmdBuildAccelerationStructuresKHR(
             commandBuffer,
@@ -582,9 +653,10 @@ void App::loadAssetsFromFile(const char *filePath) {
         throw std::runtime_error("Error loading \"" + path.string() + "\": unknown file extension");
     }
 
-    // loadSamplers(asset);
-    // loadImages(path, asset);
-    // loadTextures(asset);
+    loadSamplers(asset);
+    loadImages(path, asset);
+    loadTextures(asset);
+    loadMaterials(asset);
     loadMeshes(asset);
     loadGltfScene(filePath, asset, asset.scenes[0]);
 }
