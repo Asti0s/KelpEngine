@@ -1,17 +1,17 @@
 #include "DescriptorManager.hpp"
 
-#include "Vulkan/VkDevice.hpp"
-#include "Vulkan/VkUtils.hpp"
-#include "vulkan/vulkan_core.h"
+#include "Device.hpp"
+#include "Utils.hpp"
 
 #define VK_NO_PROTOTYPES
 #include "volk.h"
+#include <vulkan/vulkan_core.h>
 
 #include <array>
 #include <cstdint>
 #include <memory>
 
-DescriptorManager::DescriptorManager(const std::shared_ptr<Vk::Device>& device) : m_device(device) {
+DescriptorManager::DescriptorManager(const std::shared_ptr<Device>& device) : m_device(device) {
     createDescriptorSetLayout();
     createDescriptorSet();
 }

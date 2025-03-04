@@ -1,7 +1,7 @@
-#include "Vulkan/VkBuffer.hpp"
+#include "Buffer.hpp"
 
-#include "Vulkan/VkDevice.hpp"
-#include "Vulkan/VkUtils.hpp"
+#include "Device.hpp"
+#include "Utils.hpp"
 
 #include "vk_mem_alloc.h"
 #include <vulkan/vulkan_core.h>
@@ -9,8 +9,6 @@
 #include <cstdlib>
 #include <memory>
 #include <utility>
-
-using namespace Vk;
 
 Buffer::Buffer(const std::shared_ptr<Device>& device, size_t size, VkBufferUsageFlags bufferUsage, VmaAllocationCreateFlags allocationFlags) : m_device(device) {
     // Buffer creation

@@ -1,8 +1,8 @@
-#include "Vulkan/VkDevice.hpp"
+#include "Device.hpp"
 
 #define VMA_IMPLEMENTATION
 #include "Config.hpp"
-#include "Vulkan/VkUtils.hpp"
+#include "Utils.hpp"
 #include "Window.hpp"
 
 #include "GLFW/glfw3.h"
@@ -17,8 +17,6 @@
 #include <memory>
 #include <stdexcept>
 #include <vector>
-
-using namespace Vk;
 
 Device::Device(const std::shared_ptr<Window>& window) {
     VK_CHECK(volkInitialize());

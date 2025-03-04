@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Vulkan/VkDevice.hpp"
+#include "Device.hpp"
 
 #define VK_NO_PROTOTYPES
 #include "volk.h"
@@ -17,7 +17,7 @@ class DescriptorManager {
 
 
     public:
-        DescriptorManager(const std::shared_ptr<Vk::Device>& device);
+        DescriptorManager(const std::shared_ptr<Device>& device);
         ~DescriptorManager();
 
         DescriptorManager(const DescriptorManager&) = delete;
@@ -43,7 +43,7 @@ class DescriptorManager {
 
 
     private:
-        std::shared_ptr<Vk::Device> m_device;
+        std::shared_ptr<Device> m_device;
 
         VkDescriptorSetLayout m_descriptorSetLayout{};
         VkDescriptorSet m_descriptorSet{};

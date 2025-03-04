@@ -1,7 +1,7 @@
-#include "Vulkan/VkImage.hpp"
+#include "Image.hpp"
 
-#include "Vulkan/VkDevice.hpp"
-#include "Vulkan/VkUtils.hpp"
+#include "Device.hpp"
+#include "Utils.hpp"
 
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
@@ -11,8 +11,6 @@
 #include <memory>
 #include <stdexcept>
 #include <utility>
-
-using namespace Vk;
 
 Image::Image(const std::shared_ptr<Device>& device, const VkExtent3D& extent, VkImageUsageFlags usage, VkFormat format, VkImageType type, uint8_t mipLevels, VkImageAspectFlags aspectFlags) : m_device(device), m_extent(extent), m_format(format), m_mipLevels(mipLevels), m_aspectFlags(aspectFlags) {
     // Image creation

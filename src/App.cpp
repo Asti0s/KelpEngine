@@ -1,9 +1,9 @@
 #include "App.hpp"
 
-#include "Vulkan/VkDevice.hpp"
-#include "Vulkan/VkImage.hpp"
-#include "Vulkan/VkSwapchain.hpp"
-#include "Vulkan/VkUtils.hpp"
+#include "Device.hpp"
+#include "Image.hpp"
+#include "Swapchain.hpp"
+#include "Utils.hpp"
 
 #include "GLFW/glfw3.h"
 #include "glm/ext/vector_int2.hpp"
@@ -27,8 +27,8 @@
 #include <vector>
 
 App::App() {
-    const auto prepareOutputImage = [&](const std::unique_ptr<Vk::Image>& outputImage) {
-        VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Vk::Device::QueueType::Graphics); {
+    const auto prepareOutputImage = [&](const std::unique_ptr<Image>& outputImage) {
+        VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
             outputImage->cmdImagebarrier(commandBuffer,
                 VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
                 VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
@@ -37,7 +37,7 @@ App::App() {
                 VK_IMAGE_LAYOUT_UNDEFINED,
                 VK_IMAGE_LAYOUT_GENERAL
             );
-        } m_device->endSingleTimeCommands(Vk::Device::QueueType::Graphics, commandBuffer);
+        } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
     };
 
     m_window->setResizeCallback([&](const glm::ivec2& size) {
@@ -46,14 +46,14 @@ App::App() {
 
         m_camera.setPerspective(90, static_cast<float>(size.x) / static_cast<float>(size.y), 0.01, 100);
 
-        m_outputImage = std::make_unique<Vk::Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
+        m_outputImage = std::make_unique<Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
         m_outputImageBindlessId = m_descriptorManager.storeImage(m_outputImage->getImageView());
         prepareOutputImage(m_outputImage);
     });
 
     m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.01, 100);
 
-    m_outputImage = std::make_unique<Vk::Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
+    m_outputImage = std::make_unique<Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
     m_outputImageBindlessId = m_descriptorManager.storeImage(m_outputImage->getImageView());
     prepareOutputImage(m_outputImage);
 
@@ -108,9 +108,9 @@ void App::createShaderBindingTable() {
     const VkBufferUsageFlags bufferUsage = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
     const VmaAllocationCreateFlags allocationFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
 
-    m_raygenShaderBindingTable = std::make_unique<Vk::Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
-    m_missShaderBindingTable = std::make_unique<Vk::Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
-    m_hitShaderBindingTable = std::make_unique<Vk::Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
+    m_raygenShaderBindingTable = std::make_unique<Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
+    m_missShaderBindingTable = std::make_unique<Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
+    m_hitShaderBindingTable = std::make_unique<Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
 
     m_raygenShaderBindingTable->map(&m_mappedRaygenShaderBindingTable);
     m_missShaderBindingTable->map(&m_mappedMissShaderBindingTable);

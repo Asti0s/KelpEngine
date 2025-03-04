@@ -1,24 +1,24 @@
 #pragma once
 
+#include "Buffer.hpp"
 #include "Camera.hpp"
 #include "DescriptorManager.hpp"
-#include "Vulkan/VkBuffer.hpp"
-#include "Vulkan/VkDevice.hpp"
-#include "Vulkan/VkImage.hpp"
-#include "Vulkan/VkSwapchain.hpp"
+#include "Device.hpp"
+#include "Image.hpp"
+#include "Swapchain.hpp"
 #include "Window.hpp"
 
 #include "fastgltf/types.hpp"
 #include "glm/ext/matrix_float4x4.hpp"
 #include "glm/ext/vector_float2.hpp"
 #include "glm/ext/vector_float3.hpp"
+#include "glm/ext/vector_float4.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include "glslang/Public/ShaderLang.h"
 #include "vulkan/vulkan_core.h"
 
 #include <cstdint>
 #include <filesystem>
-#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -49,12 +49,12 @@ class App {
         struct AccelerationStructure {
             VkAccelerationStructureKHR handle;
             VkDeviceAddress deviceAddress;
-            Vk::Buffer buffer;
+            Buffer buffer;
         };
 
         struct Primitive {
-            Vk::Buffer vertexBuffer;
-            Vk::Buffer indexBuffer;
+            Buffer vertexBuffer;
+            Buffer indexBuffer;
             uint32_t indexCount;
             AccelerationStructure accelerationStructure;
             int materialIndex;
@@ -89,20 +89,20 @@ class App {
         };
 
         std::vector<GpuPrimitiveInstance> m_gpuPrimitiveInstances;
-        std::unique_ptr<Vk::Buffer> m_gpuPrimitiveInstancesBuffer;
+        std::unique_ptr<Buffer> m_gpuPrimitiveInstancesBuffer;
 
 
         struct Texture {
-            Vk::Image *image;
+            Image *image;
             VkSampler *sampler;
             uint32_t bindlessId;
         };
 
-        std::vector<Vk::Image> m_images;
+        std::vector<Image> m_images;
         std::vector<VkSampler> m_samplers;
         std::vector<Texture> m_textures;
 
-        Vk::Image loadImage(uint8_t *data, const glm::ivec2& size);
+        Image loadImage(uint8_t *data, const glm::ivec2& size);
         void loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset);
         void loadSamplers(const fastgltf::Asset& asset);
         void loadTextures(fastgltf::Asset& asset);
@@ -127,7 +127,7 @@ class App {
             float alphaCutoff;
         };
 
-        std::unique_ptr<Vk::Buffer> m_gpuMaterials;
+        std::unique_ptr<Buffer> m_gpuMaterials;
 
         void loadMaterials(const fastgltf::Asset& asset);
 
@@ -144,7 +144,7 @@ class App {
         VkPipelineLayout m_pipelineLayout{};
         VkPipeline m_raytracingPipeline{};
 
-        std::unique_ptr<Vk::Image> m_outputImage;
+        std::unique_ptr<Image> m_outputImage;
         uint32_t m_outputImageBindlessId{};
 
         void createRaytracingPipeline();
@@ -156,22 +156,22 @@ class App {
 
     private:
         const std::shared_ptr<Window> m_window = std::make_shared<Window>(glm::ivec2(1280, 720), "Kelp Engine", true);
-        const std::shared_ptr<Vk::Device> m_device = std::make_shared<Vk::Device>(m_window);
-        Vk::Swapchain m_swapchain{m_device, m_window->getSize()};
+        const std::shared_ptr<Device> m_device = std::make_shared<Device>(m_window);
+        Swapchain m_swapchain{m_device, m_window->getSize()};
         DescriptorManager m_descriptorManager{m_device};
 
         Camera m_camera{m_window};
 
-        std::unique_ptr<Vk::Buffer> m_topLevelAccelerationStructureBuffer;
+        std::unique_ptr<Buffer> m_topLevelAccelerationStructureBuffer;
         VkAccelerationStructureKHR m_topLevelAccelerationStructure{};
         uint32_t m_topLevelAccelerationStructureBindlessId{};
 
-        std::unique_ptr<Vk::Buffer> m_raygenShaderBindingTable;
+        std::unique_ptr<Buffer> m_raygenShaderBindingTable;
         void *m_mappedRaygenShaderBindingTable{};
 
-        std::unique_ptr<Vk::Buffer> m_missShaderBindingTable;
+        std::unique_ptr<Buffer> m_missShaderBindingTable;
         void *m_mappedMissShaderBindingTable{};
 
-        std::unique_ptr<Vk::Buffer> m_hitShaderBindingTable;
+        std::unique_ptr<Buffer> m_hitShaderBindingTable;
         void *m_mappedHitShaderBindingTable{};
 };
