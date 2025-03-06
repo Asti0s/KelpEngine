@@ -70,7 +70,7 @@ App::App() {
     createRaytracingPipeline();
     createShaderBindingTable();
 
-    loadAssetsFromFile("../assets/sponza.glb");
+    loadAssetsFromFile("../assets/bistro.glb");
 }
 
 App::~App() {
