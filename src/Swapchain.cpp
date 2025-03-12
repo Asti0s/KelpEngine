@@ -22,21 +22,28 @@ Swapchain::Swapchain(const std::shared_ptr<Device>& device, const glm::ivec2& si
 }
 
 Swapchain::~Swapchain() {
-    if (m_device != nullptr) {
-        m_device->waitIdle();
-        for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-            vkDestroySemaphore(m_device->getHandle(), m_renderFinishedSemaphores[i], nullptr);
-            vkDestroySemaphore(m_device->getHandle(), m_imageAvailableSemaphores[i], nullptr);
-            vkDestroyFence(m_device->getHandle(), m_inFlightFences[i], nullptr);
-        }
+    m_device->waitIdle();
 
+    for (uint32_t i = 0; i < Config::MAX_FRAMES_IN_FLIGHT; i++) {
+        if (m_inFlightFences[i] != nullptr)
+            vkDestroyFence(m_device->getHandle(), m_inFlightFences[i], nullptr);
+
+        if (m_renderFinishedSemaphores[i] != nullptr)
+            vkDestroySemaphore(m_device->getHandle(), m_renderFinishedSemaphores[i], nullptr);
+
+        if (m_imageAvailableSemaphores[i] != nullptr)
+            vkDestroySemaphore(m_device->getHandle(), m_imageAvailableSemaphores[i], nullptr);
+    }
+
+    if (!m_renderCommandBuffers.empty())
         vkFreeCommandBuffers(m_device->getHandle(), m_device->getCommandPool(Device::Graphics), static_cast<uint32_t>(m_renderCommandBuffers.size()), m_renderCommandBuffers.data());
 
-        for (VkImageView imageView : m_imageViews)
+    for (VkImageView imageView : m_imageViews)
+        if (imageView != nullptr)
             vkDestroyImageView(m_device->getHandle(), imageView, nullptr);
 
+    if (m_swapchain != nullptr)
         vkDestroySwapchainKHR(m_device->getHandle(), m_swapchain, nullptr);
-    }
 }
 
 void Swapchain::resize(const glm::ivec2& size) {
@@ -56,7 +63,7 @@ void Swapchain::createRenderCommandBuffers() {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .commandPool = m_device->getCommandPool(Device::Graphics),
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = MAX_FRAMES_IN_FLIGHT
+        .commandBufferCount = Config::MAX_FRAMES_IN_FLIGHT
     };
 
     VK_CHECK(vkAllocateCommandBuffers(m_device->getHandle(), &allocInfo, m_renderCommandBuffers.data()));
@@ -98,7 +105,7 @@ void Swapchain::createSwapchain(const glm::ivec2& size) {
     VkSurfaceCapabilitiesKHR capabilities{};
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(m_device->getPhysicalDevice(), m_device->getSurface(), &capabilities));
 
-    m_imageCount = MAX_FRAMES_IN_FLIGHT + 1;
+    m_imageCount = Config::MAX_FRAMES_IN_FLIGHT + 1;
     if (capabilities.maxImageCount > 0 && m_imageCount > capabilities.maxImageCount)
         m_imageCount = capabilities.maxImageCount;
 
@@ -175,7 +182,7 @@ void Swapchain::createSyncObjects() {
         .flags = VK_FENCE_CREATE_SIGNALED_BIT
     };
 
-    for (uint8_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
+    for (uint8_t i = 0; i < Config::MAX_FRAMES_IN_FLIGHT; i++) {
         VK_CHECK(vkCreateSemaphore(m_device->getHandle(), &semaphoreCreateInfo, nullptr, &m_imageAvailableSemaphores[i]));
         VK_CHECK(vkCreateSemaphore(m_device->getHandle(), &semaphoreCreateInfo, nullptr, &m_renderFinishedSemaphores[i]));
         VK_CHECK(vkCreateFence(m_device->getHandle(), &fenceCreateInfo, nullptr, &m_inFlightFences[i]));
@@ -238,5 +245,5 @@ void Swapchain::endFrame() {
 
 
     // Advance frame index
-    m_currentFrameIndex = (m_currentFrameIndex + 1) % MAX_FRAMES_IN_FLIGHT;
+    m_currentFrameIndex = (m_currentFrameIndex + 1) % Config::MAX_FRAMES_IN_FLIGHT;
 }

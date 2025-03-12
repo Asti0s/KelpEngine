@@ -61,7 +61,6 @@ class Camera {
 
 
         /* Setters */
-        void setCameraSpeed(float speed) noexcept { m_cameraSpeed = speed; }
         void setPosition(const glm::vec3& position) noexcept { m_position = position; }
         void setFront(const glm::vec3& front) noexcept { m_front = front; }
         void setUpVector(const glm::vec3& upVector) noexcept { m_upVector = upVector; }
@@ -78,8 +77,6 @@ class Camera {
 
     private:
         std::shared_ptr<Window> m_window;
-
-        float m_cameraSpeed = 10;
 
         glm::mat4 m_viewMatrix{1};
         glm::mat4 m_projectionMatrix{1};

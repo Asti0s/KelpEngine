@@ -37,22 +37,29 @@ Device::Device(const std::shared_ptr<Window>& window) {
 }
 
 Device::~Device() {
-    if (m_device != VK_NULL_HANDLE) {
+    if (m_device != VK_NULL_HANDLE)
         vkDeviceWaitIdle(m_device);
+
+    if (m_allocator != VK_NULL_HANDLE)
         vmaDestroyAllocator(m_allocator);
+    if (m_descriptorPool != VK_NULL_HANDLE)
         vkDestroyDescriptorPool(m_device, m_descriptorPool, VK_NULL_HANDLE);
 
+    if (m_queueDatas[Graphics].queue != VK_NULL_HANDLE)
         vkDestroyCommandPool(m_device, m_queueDatas[Graphics].commandPool, VK_NULL_HANDLE);
-        if (m_queueDatas[Transfer].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex)
-            vkDestroyCommandPool(m_device, m_queueDatas[Transfer].commandPool, VK_NULL_HANDLE);
-        if (m_queueDatas[Compute].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex)
-            vkDestroyCommandPool(m_device, m_queueDatas[Compute].commandPool, VK_NULL_HANDLE);
-
+    if (m_queueDatas[Transfer].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex && m_queueDatas[Transfer].queue != VK_NULL_HANDLE)
+        vkDestroyCommandPool(m_device, m_queueDatas[Transfer].commandPool, VK_NULL_HANDLE);
+    if (m_queueDatas[Compute].queueFamilyIndex != m_queueDatas[Graphics].queueFamilyIndex && m_queueDatas[Compute].queue != VK_NULL_HANDLE)
+        vkDestroyCommandPool(m_device, m_queueDatas[Compute].commandPool, VK_NULL_HANDLE);
+    if (m_singleTimeCommandsFence != VK_NULL_HANDLE)
         vkDestroyFence(m_device, m_singleTimeCommandsFence, VK_NULL_HANDLE);
+
+    if (m_device != VK_NULL_HANDLE)
         vkDestroyDevice(m_device, VK_NULL_HANDLE);
+    if (m_windowSurface != VK_NULL_HANDLE)
         vkDestroySurfaceKHR(m_instance, m_windowSurface, VK_NULL_HANDLE);
+    if (m_instance != VK_NULL_HANDLE)
         vkDestroyInstance(m_instance, VK_NULL_HANDLE);
-    }
 }
 
 void Device::endSingleTimeCommands(QueueType queueType, VkCommandBuffer commandBuffer) const {
@@ -274,7 +281,7 @@ bool Device::checkForRequiredExtensions(VkPhysicalDevice device) {
     std::vector<VkExtensionProperties> availableExtensions(extensionCount);
     VK_CHECK(vkEnumerateDeviceExtensionProperties(device, VK_NULL_HANDLE, &extensionCount, availableExtensions.data()));
 
-    for (const char* requiredExtension : REQUIRED_DEVICE_EXTENSIONS) {
+    for (const char* requiredExtension : Config::REQUIRED_DEVICE_EXTENSIONS) {
         bool found = false;
         for (const VkExtensionProperties& extension : availableExtensions) {
             if (strcmp(extension.extensionName, requiredExtension) == 0) {
@@ -472,10 +479,10 @@ void Device::createDevice() {
         .pNext = &deviceFeatures2,
         .queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()),
         .pQueueCreateInfos = queueCreateInfos.data(),
-        .enabledLayerCount = static_cast<uint32_t>(REQUIRED_VALIDATION_LAYERS.size()),
-        .ppEnabledLayerNames = REQUIRED_VALIDATION_LAYERS.empty() ? nullptr : REQUIRED_VALIDATION_LAYERS.data(),
-        .enabledExtensionCount = static_cast<uint32_t>(REQUIRED_DEVICE_EXTENSIONS.size()),
-        .ppEnabledExtensionNames = REQUIRED_DEVICE_EXTENSIONS.data(),
+        .enabledLayerCount = static_cast<uint32_t>(Config::REQUIRED_VALIDATION_LAYERS.size()),
+        .ppEnabledLayerNames = Config::REQUIRED_VALIDATION_LAYERS.empty() ? nullptr : Config::REQUIRED_VALIDATION_LAYERS.data(),
+        .enabledExtensionCount = static_cast<uint32_t>(Config::REQUIRED_DEVICE_EXTENSIONS.size()),
+        .ppEnabledExtensionNames = Config::REQUIRED_DEVICE_EXTENSIONS.data(),
     };
 
     VK_CHECK(vkCreateDevice(m_physicalDevice, &deviceCreateInfo, VK_NULL_HANDLE, &m_device));
@@ -506,7 +513,7 @@ void Device::createInstance() {
     if (extensions == nullptr)
         throw std::runtime_error("Failed to get required instance extensions.");
 
-    std::vector<const char *> instanceExtensions(REQUIRED_INSTANCE_EXTENSIONS.begin(), REQUIRED_INSTANCE_EXTENSIONS.end());
+    std::vector<const char *> instanceExtensions(Config::REQUIRED_INSTANCE_EXTENSIONS.begin(), Config::REQUIRED_INSTANCE_EXTENSIONS.end());
     instanceExtensions.reserve(extensionCount + instanceExtensions.size());
     for (uint32_t i = 0; i < extensionCount; i++)
         instanceExtensions.emplace_back(extensions[i]);
@@ -526,8 +533,8 @@ void Device::createInstance() {
         .pNext = nullptr,
         .flags = 0,
         .pApplicationInfo = &appInfo,
-        .enabledLayerCount = static_cast<uint32_t>(REQUIRED_VALIDATION_LAYERS.size()),
-        .ppEnabledLayerNames = REQUIRED_VALIDATION_LAYERS.empty() ? nullptr : REQUIRED_VALIDATION_LAYERS.data(),
+        .enabledLayerCount = static_cast<uint32_t>(Config::REQUIRED_VALIDATION_LAYERS.size()),
+        .ppEnabledLayerNames = Config::REQUIRED_VALIDATION_LAYERS.empty() ? nullptr : Config::REQUIRED_VALIDATION_LAYERS.data(),
         .enabledExtensionCount = static_cast<uint32_t>(instanceExtensions.size()),
         .ppEnabledExtensionNames = instanceExtensions.data()
     };

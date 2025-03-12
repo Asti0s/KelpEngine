@@ -66,7 +66,7 @@ Buffer& Buffer::operator=(Buffer&& other) noexcept {
 }
 
 void Buffer::cleanup() {
-    if (m_device != nullptr)
+    if (m_buffer != nullptr)
         vmaDestroyBuffer(m_device->getAllocator(), m_buffer, m_allocation);
 }
 

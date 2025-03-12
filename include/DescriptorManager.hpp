@@ -27,8 +27,30 @@ class DescriptorManager {
         DescriptorManager& operator=(DescriptorManager&&) = delete;
 
 
+        /**
+         * @brief Store an image view in the array of storage images of the descriptor set and return the dst array index.
+         * The index should be passed to the shader to access the image through the bindless texture extension at binding STORAGE_IMAGE_BINDING
+         *
+         * @param imageView image view to store
+         * @return uint32_t index of the stored image
+         */
         uint32_t storeImage(VkImageView imageView);
+
+        /**
+         * @brief Store an image view and a sampler in the array of combined image samplers of the descriptor set and return the dst array index.
+         * The index should be passed to the shader to access the image through the bindless texture extension at binding COMBINED_IMAGE_SAMPLER_BINDING.
+         *
+         * @param imageView image view to store
+         * @param sampler sampler to store
+         * @return uint32_t index of the stored image
+         */
         uint32_t storeSampledImage(VkImageView imageView, VkSampler sampler);
+
+        /**
+         * @brief Store an acceleration structure in the descriptor set at binding ACCELERATION_STRUCTURE_BINDING
+         *
+         * @param accelerationStructure acceleration structure to store
+         */
         void storeAccelerationStructure(VkAccelerationStructureKHR accelerationStructure);
 
 

@@ -32,6 +32,24 @@ class Device {
         Device& operator=(Device&& other) = delete;
 
 
+
+        /**
+        * @brief Waits for the device to finish executing all the commands.
+        * Must be called before destroying the vulkan resources.
+        */
+        void waitIdle() const;
+
+        /**
+         * @brief Begins a single time command buffer for the given queue type.
+         * /!\ Only one single time command buffer per queue type can be active at a time.
+         *
+         * @param queueType The queue type to use for the command buffer.
+         * @return VkCommandBuffer The single time command buffer.
+         */
+        [[nodiscard]] VkCommandBuffer beginSingleTimeCommands(QueueType queueType) const;
+        void endSingleTimeCommands(QueueType queueType, VkCommandBuffer commandBuffer) const;
+
+
         /**
         * @brief Finds the memory type index that satisfies the given filter and properties.
         *
@@ -40,16 +58,6 @@ class Device {
         * @return uint32_t The memory type index that satisfies the given filter and properties.
         */
         [[nodiscard]] uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) const;
-
-        /**
-        * @brief Waits for the device to finish executing all the commands.
-        * Must be called before destroying the vulkan resources.
-        */
-        void waitIdle() const;
-
-
-        [[nodiscard]] VkCommandBuffer beginSingleTimeCommands(QueueType queueType) const;
-        void endSingleTimeCommands(QueueType queueType, VkCommandBuffer commandBuffer) const;
 
 
         /* Getters */

@@ -33,7 +33,8 @@ Window::Window(const glm::ivec2& dimensions, const char* title, bool resizable) 
 }
 
 Window::~Window() {
-    glfwDestroyWindow(m_window);
+    if (m_window != nullptr)
+        glfwDestroyWindow(m_window);
     glfwTerminate();
 }
 

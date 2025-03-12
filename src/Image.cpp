@@ -89,10 +89,10 @@ Image& Image::operator=(Image&& other) noexcept {
 }
 
 void Image::cleanup() {
-    if (m_device != nullptr) {
+    if (m_imageView != VK_NULL_HANDLE)
         vkDestroyImageView(m_device->getHandle(), m_imageView, nullptr);
+    if (m_image != VK_NULL_HANDLE)
         vmaDestroyImage(m_device->getAllocator(), m_image, m_allocation);
-    }
 }
 
 void Image::cmdCopyFromBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer) {

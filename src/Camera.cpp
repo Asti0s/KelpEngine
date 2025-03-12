@@ -7,6 +7,7 @@
 
 #include "Camera.hpp"
 
+#include "Config.hpp"
 #include "Window.hpp"
 
 #define GLM_FORCE_RADIANS
@@ -39,7 +40,7 @@ void Camera::setPerspective(float fov, float aspect, float near, float far) noex
 }
 
 void Camera::update(float deltaTime) noexcept {
-    const float offset = deltaTime * m_cameraSpeed;
+    const float offset = deltaTime * Config::CAMERA_SPEED;
 
 
     // Mouse movement handling
@@ -57,9 +58,8 @@ void Camera::update(float deltaTime) noexcept {
         m_lastX = static_cast<float>(cursorPos.x);
         m_lastY = static_cast<float>(cursorPos.y);
 
-        const float sensitivity = 0.1;
-        xOffset *= sensitivity;
-        yOffset *= sensitivity;
+        xOffset *= Config::CAMERA_SENSITIVITY;
+        yOffset *= Config::CAMERA_SENSITIVITY;
 
         m_yaw += xOffset;
 

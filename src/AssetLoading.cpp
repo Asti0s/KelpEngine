@@ -42,50 +42,31 @@ void App::loadMaterials(const fastgltf::Asset& asset) {
     gpuMaterials.reserve(asset.materials.size());
 
     for (const auto& material : asset.materials) {
-        GpuMaterial gpuMaterial{
-            .baseColorTextureIndex = -1,
-            .normalTextureIndex = -1,
-            .metallicRoughnessTextureIndex = -1,
-            .emissiveTextureIndex = -1,
-            .baseColorFactor = {1, 1, 1, 1},
-            .metallicFactor = 1,
-            .roughnessFactor = 1,
-            .emissiveFactor = {0, 0, 0},
+        const GpuMaterial gpuMaterial{
+            .baseColorTextureIndex = material.pbrData.baseColorTexture.has_value() ? static_cast<int>(material.pbrData.baseColorTexture.value().textureIndex) : -1,
+            .normalTextureIndex = material.normalTexture.has_value() ? static_cast<int>(material.normalTexture.value().textureIndex) : -1,
+            .metallicRoughnessTextureIndex = material.pbrData.metallicRoughnessTexture.has_value() ? static_cast<int>(material.pbrData.metallicRoughnessTexture.value().textureIndex) : -1,
+            .emissiveTextureIndex = material.emissiveTexture.has_value() ? static_cast<int>(material.emissiveTexture.value().textureIndex) : -1,
+            .baseColorFactor = glm::vec4(material.pbrData.baseColorFactor.x(), material.pbrData.baseColorFactor.y(), material.pbrData.baseColorFactor.z(), material.pbrData.baseColorFactor.w()),
+            .metallicFactor = material.pbrData.metallicFactor,
+            .roughnessFactor = material.pbrData.roughnessFactor,
+            .emissiveFactor = glm::vec3(material.emissiveFactor.x(), material.emissiveFactor.y(), material.emissiveFactor.z()),
             .alphaMode = static_cast<int>(material.alphaMode),
             .alphaCutoff = material.alphaCutoff,
         };
 
-        if (material.pbrData.baseColorTexture.has_value()) {
-            gpuMaterial.baseColorTextureIndex = static_cast<int>(material.pbrData.baseColorTexture.value().textureIndex);
-            gpuMaterial.baseColorFactor = glm::vec4(material.pbrData.baseColorFactor.x(), material.pbrData.baseColorFactor.y(), material.pbrData.baseColorFactor.z(), material.pbrData.baseColorFactor.w());
-        }
-
-        if (material.normalTexture.has_value())
-            gpuMaterial.normalTextureIndex = static_cast<int>(material.normalTexture.value().textureIndex);
-
-        if (material.pbrData.metallicRoughnessTexture.has_value()) {
-            gpuMaterial.metallicRoughnessTextureIndex = static_cast<int>(material.pbrData.metallicRoughnessTexture.value().textureIndex);
-            gpuMaterial.metallicFactor = material.pbrData.metallicFactor;
-            gpuMaterial.roughnessFactor = material.pbrData.roughnessFactor;
-        }
-
-        if (material.emissiveTexture.has_value()) {
-            gpuMaterial.emissiveTextureIndex = static_cast<int>(material.emissiveTexture.value().textureIndex);
-            gpuMaterial.emissiveFactor = {material.emissiveFactor.x(), material.emissiveFactor.y(), material.emissiveFactor.z()};
-        }
-
         gpuMaterials.push_back(gpuMaterial);
     }
 
-    const Buffer gpuMaterialsStagingBuffer = Buffer(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    const Buffer gpuMaterialStagingBuffer = Buffer(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
     void *data = nullptr;
-    gpuMaterialsStagingBuffer.map(&data);
+    gpuMaterialStagingBuffer.map(&data);
     memcpy(data, gpuMaterials.data(), gpuMaterials.size() * sizeof(GpuMaterial));
-    gpuMaterialsStagingBuffer.unmap();
+    gpuMaterialStagingBuffer.unmap();
 
-    m_gpuMaterials = std::make_unique<Buffer>(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    m_gpuMaterials = std::make_unique<Buffer>(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::Graphics); {
-        m_gpuMaterials->copyFrom(commandBuffer, gpuMaterialsStagingBuffer.getHandle(), gpuMaterials.size() * sizeof(GpuMaterial));
+        m_gpuMaterials->copyFrom(commandBuffer, gpuMaterialStagingBuffer.getHandle(), gpuMaterials.size() * sizeof(GpuMaterial));
     } m_device->endSingleTimeCommands(Device::Graphics, commandBuffer);
 }
 
@@ -117,7 +98,7 @@ Image App::loadImage(uint8_t *data, const glm::ivec2& size) {
 void App::loadSamplers(const fastgltf::Asset& asset) {
     m_samplers.reserve(asset.samplers.size());
 
-    constexpr auto gltfToVkFilter = [](std::optional<fastgltf::Filter> filter) -> VkFilter {
+    static constexpr auto gltfToVkFilter = [](std::optional<fastgltf::Filter> filter) -> VkFilter {
         if (!filter.has_value())
             return VK_FILTER_NEAREST;
 
@@ -125,16 +106,16 @@ void App::loadSamplers(const fastgltf::Asset& asset) {
             case fastgltf::Filter::Linear:
             case fastgltf::Filter::LinearMipMapNearest:
             case fastgltf::Filter::LinearMipMapLinear:
+            default:
                 return VK_FILTER_LINEAR;
             case fastgltf::Filter::Nearest:
             case fastgltf::Filter::NearestMipMapNearest:
             case fastgltf::Filter::NearestMipMapLinear:
-            default:
                 return VK_FILTER_NEAREST;
         }
     };
 
-    constexpr auto gltfToVkMipmapMode = [](std::optional<fastgltf::Filter> filter) -> VkSamplerMipmapMode {
+    static constexpr auto gltfToVkMipmapMode = [](std::optional<fastgltf::Filter> filter) -> VkSamplerMipmapMode {
         if (!filter.has_value())
             return VK_SAMPLER_MIPMAP_MODE_NEAREST;
 
@@ -142,16 +123,16 @@ void App::loadSamplers(const fastgltf::Asset& asset) {
             case fastgltf::Filter::Linear:
             case fastgltf::Filter::NearestMipMapLinear:
             case fastgltf::Filter::LinearMipMapLinear:
+            default:
                 return VK_SAMPLER_MIPMAP_MODE_LINEAR;
             case fastgltf::Filter::Nearest:
             case fastgltf::Filter::NearestMipMapNearest:
             case fastgltf::Filter::LinearMipMapNearest:
-            default:
                 return VK_SAMPLER_MIPMAP_MODE_NEAREST;
         }
     };
 
-    constexpr auto gltfToVkSamplerAddressMode = [](fastgltf::Wrap wrap) -> VkSamplerAddressMode {
+    static constexpr auto gltfToVkSamplerAddressMode = [](fastgltf::Wrap wrap) -> VkSamplerAddressMode {
         switch (wrap) {
             case fastgltf::Wrap::ClampToEdge:
                 return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
@@ -520,7 +501,7 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
     memcpy(data, m_gpuPrimitiveInstances.data(), m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance));
     gpuPrimitiveInstancesStagingBuffer.unmap();
 
-    m_gpuPrimitiveInstancesBuffer = std::make_unique<Buffer>(m_device, m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    m_gpuPrimitiveInstancesBuffer = std::make_unique<Buffer>(m_device, m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
         m_gpuPrimitiveInstancesBuffer->copyFrom(commandBuffer, gpuPrimitiveInstancesStagingBuffer.getHandle(), m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance));
     } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);

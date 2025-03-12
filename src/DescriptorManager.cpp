@@ -18,7 +18,8 @@ DescriptorManager::DescriptorManager(const std::shared_ptr<Device>& device) : m_
 
 DescriptorManager::~DescriptorManager() {
     m_device->waitIdle();
-    vkDestroyDescriptorSetLayout(m_device->getHandle(), m_descriptorSetLayout, nullptr);
+    if (m_descriptorSetLayout != VK_NULL_HANDLE)
+        vkDestroyDescriptorSetLayout(m_device->getHandle(), m_descriptorSetLayout, nullptr);
 }
 
 uint32_t DescriptorManager::storeImage(VkImageView imageView) {

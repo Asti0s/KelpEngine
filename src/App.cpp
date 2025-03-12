@@ -70,7 +70,7 @@ App::App() {
     createRaytracingPipeline();
     createShaderBindingTable();
 
-    loadAssetsFromFile("../assets/bistro.glb");
+    loadAssetsFromFile("../assets/sponza.glb");
 }
 
 App::~App() {
@@ -78,18 +78,27 @@ App::~App() {
 
     for (const auto& mesh : m_meshes)
         for (const auto& primitive : mesh.primitives)
-            vkDestroyAccelerationStructureKHR(m_device->getHandle(), primitive.accelerationStructure.handle, VK_NULL_HANDLE);
+            if (primitive.accelerationStructure.handle != VK_NULL_HANDLE)
+                vkDestroyAccelerationStructureKHR(m_device->getHandle(), primitive.accelerationStructure.handle, VK_NULL_HANDLE);
     for (const auto& sampler : m_samplers)
-        vkDestroySampler(m_device->getHandle(), sampler, VK_NULL_HANDLE);
+        if (sampler != VK_NULL_HANDLE)
+            vkDestroySampler(m_device->getHandle(), sampler, VK_NULL_HANDLE);
 
-    vkDestroyAccelerationStructureKHR(m_device->getHandle(), m_topLevelAccelerationStructure, VK_NULL_HANDLE);
+    if (m_topLevelAccelerationStructure != VK_NULL_HANDLE)
+        vkDestroyAccelerationStructureKHR(m_device->getHandle(), m_topLevelAccelerationStructure, VK_NULL_HANDLE);
 
-    m_hitShaderBindingTable->unmap();
-    m_missShaderBindingTable->unmap();
-    m_raygenShaderBindingTable->unmap();
+    if (m_hitShaderBindingTable != nullptr)
+        m_hitShaderBindingTable->unmap();
+    if (m_missShaderBindingTable != nullptr)
+        m_missShaderBindingTable->unmap();
+    if (m_raygenShaderBindingTable != nullptr)
+        m_raygenShaderBindingTable->unmap();
 
-    vkDestroyPipeline(m_device->getHandle(), m_raytracingPipeline, VK_NULL_HANDLE);
-    vkDestroyPipelineLayout(m_device->getHandle(), m_pipelineLayout, VK_NULL_HANDLE);
+    if (m_raytracingPipeline != VK_NULL_HANDLE)
+        vkDestroyPipeline(m_device->getHandle(), m_raytracingPipeline, VK_NULL_HANDLE);
+
+    if (m_pipelineLayout != VK_NULL_HANDLE)
+        vkDestroyPipelineLayout(m_device->getHandle(), m_pipelineLayout, VK_NULL_HANDLE);
 }
 
 static size_t align(size_t value, size_t alignment) {   // NOLINT
@@ -97,16 +106,16 @@ static size_t align(size_t value, size_t alignment) {   // NOLINT
 }
 
 void App::createShaderBindingTable() {
+    constexpr uint32_t groupCount = 3;
     const uint32_t handleSize = m_raytracingProperties.shaderGroupHandleSize;
     const uint32_t handleSizeAligned = align(handleSize, m_raytracingProperties.shaderGroupHandleAlignment);
-    const uint32_t groupCount = 3;
     const uint32_t sbtSize = groupCount * handleSizeAligned;
+
+    constexpr VkBufferUsageFlags bufferUsage = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+    constexpr VmaAllocationCreateFlags allocationFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
 
     std::vector<uint8_t> shaderHandleStorage(sbtSize);
     VK_CHECK(vkGetRayTracingShaderGroupHandlesKHR(m_device->getHandle(), m_raytracingPipeline, 0, groupCount, sbtSize, shaderHandleStorage.data()));
-
-    const VkBufferUsageFlags bufferUsage = VK_BUFFER_USAGE_SHADER_BINDING_TABLE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-    const VmaAllocationCreateFlags allocationFlags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
 
     m_raygenShaderBindingTable = std::make_unique<Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
     m_missShaderBindingTable = std::make_unique<Buffer>(m_device, sbtSize, bufferUsage, allocationFlags);
@@ -304,12 +313,8 @@ void App::run() {
         VkCommandBuffer commandBuffer = m_swapchain.getCurrentCommandBuffer();
 
 
-
-
-
         // Bind things
         vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_raytracingPipeline);
-
         vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1, &m_descriptorManager.getDescriptorSet(), 0, nullptr);
 
         const PushConstantData pushConstantData{
@@ -319,8 +324,6 @@ void App::run() {
             .gpuMaterialsBufferAddress = m_gpuMaterials->getDeviceAddress(),
         };
         vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstantData), &pushConstantData);
-
-
 
 
         // Trace rays
@@ -345,10 +348,7 @@ void App::run() {
         };
 
         const VkStridedDeviceAddressRegionKHR callableShaderSbtEntry{};
-
         vkCmdTraceRaysKHR(commandBuffer, &raygenShaderSbtEntry, &missShaderSbtEntry, &hitShaderSbtEntry, &callableShaderSbtEntry, m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1);
-
-
 
 
         // Transition ouput image to transfer source
@@ -412,7 +412,7 @@ void App::run() {
         );
 
 
-
+        // End frame
         m_swapchain.endFrame();
 
         loopEnd = std::chrono::high_resolution_clock::now();
