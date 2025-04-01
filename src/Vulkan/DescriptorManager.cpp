@@ -1,7 +1,7 @@
-#include "DescriptorManager.hpp"
+#include "Vulkan/DescriptorManager.hpp"
 
-#include "Device.hpp"
-#include "Utils.hpp"
+#include "Vulkan/Device.hpp"
+#include "Vulkan/Utils.hpp"
 
 #define VK_NO_PROTOTYPES
 #include "volk.h"

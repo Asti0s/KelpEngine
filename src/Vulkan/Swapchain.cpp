@@ -1,8 +1,8 @@
-#include "Swapchain.hpp"
+#include "Vulkan/Swapchain.hpp"
 
 #include "Config.hpp"
-#include "Device.hpp"
-#include "Utils.hpp"
+#include "Vulkan/Device.hpp"
+#include "Vulkan/Utils.hpp"
 
 #include "glm/ext/vector_int2.hpp"
 #include "volk.h"

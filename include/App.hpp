@@ -1,11 +1,11 @@
 #pragma once
 
-#include "Buffer.hpp"
 #include "Camera.hpp"
-#include "DescriptorManager.hpp"
-#include "Device.hpp"
-#include "Image.hpp"
-#include "Swapchain.hpp"
+#include "Vulkan/Buffer.hpp"
+#include "Vulkan/DescriptorManager.hpp"
+#include "Vulkan/Device.hpp"
+#include "Vulkan/Image.hpp"
+#include "Vulkan/Swapchain.hpp"
 #include "Window.hpp"
 
 #include "fastgltf/types.hpp"
@@ -15,7 +15,7 @@
 #include "glm/ext/vector_float4.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include "glslang/Public/ShaderLang.h"
-#include "vulkan/vulkan_core.h"
+#include <vulkan/vulkan_core.h>
 
 #include <cstdint>
 #include <filesystem>

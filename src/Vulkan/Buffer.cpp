@@ -1,7 +1,7 @@
-#include "Buffer.hpp"
+#include "Vulkan/Buffer.hpp"
 
-#include "Device.hpp"
-#include "Utils.hpp"
+#include "Vulkan/Device.hpp"
+#include "Vulkan/Utils.hpp"
 
 #include "vk_mem_alloc.h"
 #include <vulkan/vulkan_core.h>

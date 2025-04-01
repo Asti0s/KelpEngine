@@ -1,9 +1,9 @@
 #include "App.hpp"
 
-#include "Device.hpp"
-#include "Image.hpp"
-#include "Swapchain.hpp"
-#include "Utils.hpp"
+#include "Vulkan/Device.hpp"
+#include "Vulkan/Image.hpp"
+#include "Vulkan/Swapchain.hpp"
+#include "Vulkan/Utils.hpp"
 
 #include "GLFW/glfw3.h"
 #include "glm/ext/vector_int2.hpp"

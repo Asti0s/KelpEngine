@@ -1,9 +1,9 @@
 #include "App.hpp"
 
-#include "Buffer.hpp"
-#include "Device.hpp"
-#include "Image.hpp"
-#include "Utils.hpp"
+#include "Vulkan/Buffer.hpp"
+#include "Vulkan/Device.hpp"
+#include "Vulkan/Image.hpp"
+#include "Vulkan/Utils.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define GLM_ENABLE_EXPERIMENTAL
