@@ -44,19 +44,6 @@ class Image {
         */
         void cmdGenerateMipmaps(VkCommandBuffer commandBuffer);
 
-        /**
-        * @brief Transition the image to a new layout
-        *
-        * @param commandBuffer the command buffer to record the barrier command into
-        * @param srcStageMask the source pipeline stage
-        * @param dstStageMask the destination pipeline stage
-        * @param srcAccessMask the source access mask
-        * @param dstAccessMask the destination access mask
-        * @param oldLayout the old layout
-        * @param newLayout the new layout
-        */
-        void cmdImagebarrier(VkCommandBuffer commandBuffer, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask, VkAccessFlags srcAccessMask, VkAccessFlags dstAccessMask, VkImageLayout oldLayout, VkImageLayout newLayout);
-
 
         /* Getters */
         [[nodiscard]] VkImage getHandle() const { return m_image; }

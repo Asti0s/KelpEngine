@@ -20,19 +20,23 @@
 #include "glm/gtx/string_cast.hpp"
 #include "stb_image.h"
 #include "vk_mem_alloc.h"
-#include "vulkan/vulkan_core.h"
+#include <vulkan/vulkan_core.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -73,21 +77,48 @@ void App::loadMaterials(const fastgltf::Asset& asset) {
 Image App::loadImage(uint8_t *data, const glm::ivec2& size) {
     // Image creation
     const int mipLevels = static_cast<int>(std::floor(std::log2(std::max(size.x, size.y)))) + 1;
-    Image image = Image(m_device, VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, mipLevels);
+    Image image = Image(m_device, VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, mipLevels);
 
-    // Staging buffer creation
-    const Buffer stagingBuffer = Buffer(m_device, static_cast<size_t>(size.x * size.y) * 4, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
-    void *stagingData = nullptr;
-    stagingBuffer.map(&stagingData);
-    memcpy(stagingData, data, static_cast<size_t>(size.x * size.y) * 4);
-    stagingBuffer.unmap();
+    const VkHostImageLayoutTransitionInfoEXT hostImageLayoutTransitionInfo{
+        .sType = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,
+        .image = image.getHandle(),
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = static_cast<uint32_t>(mipLevels),
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+    };
+    VK_CHECK(vkTransitionImageLayout(m_device->getHandle(), 1, &hostImageLayoutTransitionInfo));
 
-    // Transfer from staging buffer to image & mipmap generation
-    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
-        image.cmdImagebarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-        image.cmdCopyFromBuffer(commandBuffer, stagingBuffer.getHandle());
-        image.cmdGenerateMipmaps(commandBuffer);
-    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+    const VkMemoryToImageCopy copyRegion{
+        .sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY,
+        .pHostPointer = data,
+        .imageSubresource = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .mipLevel = 0,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+        },
+        .imageExtent = {
+            .width = static_cast<uint32_t>(size.x),
+            .height = static_cast<uint32_t>(size.y),
+            .depth = 1,
+        },
+    };
+
+    const VkCopyMemoryToImageInfo copyMemoryToImageInfo{
+        .sType = VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO,
+        .dstImage = image.getHandle(),
+        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .regionCount = 1,
+        .pRegions = &copyRegion,
+    };
+    VK_CHECK(vkCopyMemoryToImage(m_device->getHandle(), &copyMemoryToImageInfo));
+
 
     // Cleanup
     stbi_image_free(data);
@@ -175,77 +206,109 @@ void App::loadTextures(fastgltf::Asset& asset) {
     m_textures.reserve(asset.textures.size());
 
     for (const fastgltf::Texture& texture : asset.textures) {
-        Image& image = m_images[texture.imageIndex.value()];
+        std::shared_ptr<Image>& image = m_images[texture.imageIndex.value()];
         VkSampler& sampler = m_samplers[texture.samplerIndex.value()];
 
         m_textures.push_back(Texture {
-            .image = &image,
-            .sampler = &sampler,
-            .bindlessId = m_descriptorManager.storeSampledImage(image.getImageView(), sampler),
+            .image = image,
+            .sampler = sampler,
+            .bindlessId = m_descriptorManager.storeSampledImage(image->getImageView(), sampler),
         });
     }
 }
 
 void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset) {
-    m_images.reserve(asset.images.size());
+    std::vector<std::thread> loadingThreads(asset.images.size());
+    std::mutex loadedImagesMutex;
+
+    std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
 
     for (uint32_t i = 0; i < asset.images.size(); i++) {
-        std::clog << "Loading images: " << static_cast<float>(i) / static_cast<float>(asset.images.size()) * 100 << "%" << std::endl;
-        fastgltf::Image& image = asset.images[i];
+        loadingThreads[i] = std::thread([&, i]() {
+            fastgltf::Image& image = asset.images[i];
 
-        glm::ivec2 size;
-        int nrChannels = 0;
+            glm::ivec2 size;
+            int nrChannels = 0;
 
-        m_images.push_back(std::visit(fastgltf::visitor {
-            [](auto& /* UNUSED */) -> Image {
-                throw std::runtime_error("Failed to load image: unknown image type");
-            },
-            [&](fastgltf::sources::BufferView& imageBufferView) -> Image {
-                const fastgltf::BufferView& bufferView = asset.bufferViews[imageBufferView.bufferViewIndex];
-                fastgltf::Buffer& buffer = asset.buffers[bufferView.bufferIndex];
+            std::shared_ptr<Image> newImage = std::make_unique<Image>(std::visit(fastgltf::visitor {
+                [](auto& /* UNUSED */) -> Image {
+                    throw std::runtime_error("Failed to load image: unknown image type");
+                },
+                [&](fastgltf::sources::BufferView& imageBufferView) -> Image {
+                    const fastgltf::BufferView& bufferView = asset.bufferViews[imageBufferView.bufferViewIndex];
+                    fastgltf::Buffer& buffer = asset.buffers[bufferView.bufferIndex];
 
-                return std::visit(fastgltf::visitor {
-                    [](auto& /* UNUSED */) -> Image {
-                        throw std::runtime_error("Failed to load image buffer view: unknown buffer type");
-                    },
-                    [&](fastgltf::sources::Array& array) -> Image {
-                        uint8_t *data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(array.bytes.data() + bufferView.byteOffset), static_cast<int>(bufferView.byteLength), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
-                        if(data == nullptr)
-                            throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
+                    return std::visit(fastgltf::visitor {
+                        [](auto& /* UNUSED */) -> Image {
+                            throw std::runtime_error("Failed to load image buffer view: unknown buffer type");
+                        },
+                        [&](fastgltf::sources::Array& array) -> Image {
+                            uint8_t *data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(array.bytes.data() + bufferView.byteOffset), static_cast<int>(bufferView.byteLength), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
+                            if(data == nullptr)
+                                throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
 
-                        return loadImage(data, size);
-                    }
-                }, buffer.data);
-            },
-            [&](fastgltf::sources::Array& array) -> Image {
-                uint8_t *data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(array.bytes.data()), static_cast<int>(array.bytes.size()), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
-                if(data == nullptr)
-                    throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
+                            return loadImage(data, size);
+                        }
+                    }, buffer.data);
+                },
+                [&](fastgltf::sources::Array& array) -> Image {
+                    uint8_t *data = stbi_load_from_memory(reinterpret_cast<const stbi_uc*>(array.bytes.data()), static_cast<int>(array.bytes.size()), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
+                    if(data == nullptr)
+                        throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
 
-                return loadImage(data, size);
-            },
-            [&](fastgltf::sources::URI& texturePath) -> Image {
-                const std::filesystem::path path = std::filesystem::path(filePath).parent_path().append(texturePath.uri.c_str());
-                if (!std::filesystem::exists(path))
-                    throw std::runtime_error("Error loading \"" + path.string() + "\": file not found");
+                    return loadImage(data, size);
+                },
+                [&](fastgltf::sources::URI& texturePath) -> Image {
+                    const std::filesystem::path path = std::filesystem::path(filePath).parent_path().append(texturePath.uri.c_str());
+                    if (!std::filesystem::exists(path))
+                        throw std::runtime_error("Error loading \"" + path.string() + "\": file not found");
 
-                uint8_t *data = stbi_load(path.string().c_str(), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
-                if (data == nullptr)
-                    throw std::runtime_error("Failed to load texture \"" + path.string() + "\": " + std::string(stbi_failure_reason()));
+                    uint8_t *data = stbi_load(path.string().c_str(), &size.x, &size.y, &nrChannels, STBI_rgb_alpha);
+                    if (data == nullptr)
+                        throw std::runtime_error("Failed to load texture \"" + path.string() + "\": " + std::string(stbi_failure_reason()));
 
-                return loadImage(data, size);
-            },
-        }, image.data));
+                    return loadImage(data, size);
+                },
+            }, image.data));
+
+            loadedImagesMutex.lock();
+            std::clog << "Loaded image " << i << std::endl;
+            m_images[i] = std::move(newImage);
+            loadedImagesMutex.unlock();
+        });
     }
+
+    for (auto& thread : loadingThreads) {
+        if (thread.joinable())
+            thread.join();
+    }
+
+    std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<float> elapsedTime = end - start;
+    float total = elapsedTime.count();
+    std::clog << "Loaded all images in " << elapsedTime.count() << " seconds" << std::endl;
+
+    start = std::chrono::high_resolution_clock::now();
+
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+        for (auto& [index, image] : m_images)
+            image->cmdGenerateMipmaps(commandBuffer);
+    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+
+    end = std::chrono::high_resolution_clock::now();
+    elapsedTime = end - start;
+    total += elapsedTime.count();
+    std::clog << "Generated mipmaps in " << elapsedTime.count() << " seconds" << std::endl;
+    std::clog << "Total texture loading time: " << total << " seconds" << std::endl;
 }
 
 void App::loadMeshes(fastgltf::Asset& asset) {
     for (const auto& mesh : asset.meshes) {
-        Mesh newMesh;
-        newMesh.primitives.reserve(mesh.primitives.size());
+        std::shared_ptr<Mesh> newMesh = std::make_shared<Mesh>();
+        newMesh->primitives.reserve(mesh.primitives.size());
 
         for (const auto& primitive : mesh.primitives)
-            newMesh.primitives.push_back(loadPrimitive(asset, primitive));
+            newMesh->primitives.push_back(loadPrimitive(asset, primitive));
 
         m_meshes.push_back(std::move(newMesh));
     }
@@ -309,9 +372,10 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
 
 
     // Transfer from staging buffers to buffers
-    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics);
-    vertexBuffer.copyFrom(commandBuffer, vertexStagingBuffer.getHandle(), vertices.size() * sizeof(Vertex));
-    indexBuffer.copyFrom(commandBuffer, indexStagingBuffer.getHandle(), indices.size() * sizeof(uint32_t));
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+        vertexBuffer.copyFrom(commandBuffer, vertexStagingBuffer.getHandle(), vertices.size() * sizeof(Vertex));
+        indexBuffer.copyFrom(commandBuffer, indexStagingBuffer.getHandle(), indices.size() * sizeof(uint32_t));
+    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
     // Acceleration structure get sizes
@@ -394,11 +458,13 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
     };
     std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
 
-    vkCmdBuildAccelerationStructuresKHR(
-        commandBuffer,
-        1,
-        &accelerationBuildGeometryInfo,
-        accelerationBuildStructureRangeInfos.data());
+    commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+        vkCmdBuildAccelerationStructuresKHR(
+            commandBuffer,
+            1,
+            &accelerationBuildGeometryInfo,
+            accelerationBuildStructureRangeInfos.data());
+    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
     // Get acceleration structure device address
@@ -407,10 +473,6 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
         .accelerationStructure = accelerationStructureHandle,
     };
     const VkDeviceAddress accelerationStructureAddress = vkGetAccelerationStructureDeviceAddressKHR(m_device->getHandle(), &accelerationDeviceAddressInfo);
-
-
-    // Submit command buffer
-    m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
     // New mesh creation
@@ -454,13 +516,13 @@ void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::As
     };
 
     if (node.meshIndex.has_value()) {
-        Mesh& mesh = m_meshes.at(node.meshIndex.value());
+        const std::shared_ptr<Mesh>& mesh = m_meshes.at(node.meshIndex.value());
 
         MeshInstance newMeshInstance {
-            .mesh = &mesh,
+            .mesh = mesh,
         };
 
-        for (const auto& primitive : mesh.primitives) {
+        for (const auto& primitive : mesh->primitives) {
             const VkAccelerationStructureInstanceKHR instance{
                 .transform = transformMatrix,
                 .instanceCustomIndex = static_cast<uint32_t>(m_gpuPrimitiveInstances.size()),

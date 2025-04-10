@@ -1,8 +1,8 @@
 #pragma once
 
 #define VK_NO_PROTOTYPES
-#include "vulkan/vulkan_core.h"
 #include "volk.h"
+#include <vulkan/vulkan_core.h>
 
 #include <array>
 #include <cstdint>
@@ -25,8 +25,7 @@ namespace Config {
         VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME
     };
 
-    static constexpr std::array<const char *, 1> REQUIRED_INSTANCE_EXTENSIONS = {
-        VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+    static constexpr std::array<const char *, 0> REQUIRED_INSTANCE_EXTENSIONS = {
     };
 
 }   // namespace Config

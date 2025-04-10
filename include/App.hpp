@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,8 +36,6 @@ class App {
         App& operator=(App&&) = delete;
 
         void run();
-
-        void handleEvents(float deltaTime);
 
 
     private: // Assets
@@ -65,22 +64,9 @@ class App {
         };
 
         struct MeshInstance {
-            Mesh *mesh;
+            std::shared_ptr<Mesh> mesh;
             std::vector<VkAccelerationStructureInstanceKHR> instances;
         };
-
-        std::vector<Mesh> m_meshes;
-        std::vector<MeshInstance> m_meshInstances;
-
-        Primitive loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive);
-        void loadMeshes(fastgltf::Asset& asset);
-
-        void loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform = glm::mat4(1));
-        void loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene);
-
-        void loadAssetsFromFile(const char *filePath);
-
-
 
         struct GpuPrimitiveInstance {
             VkDeviceAddress vertexBufferAddress;
@@ -88,26 +74,11 @@ class App {
             int materialIndex;
         };
 
-        std::vector<GpuPrimitiveInstance> m_gpuPrimitiveInstances;
-        std::unique_ptr<Buffer> m_gpuPrimitiveInstancesBuffer;
-
-
         struct Texture {
-            Image *image;
-            VkSampler *sampler;
+            std::shared_ptr<Image> image;
+            VkSampler sampler;
             uint32_t bindlessId;
         };
-
-        std::vector<Image> m_images;
-        std::vector<VkSampler> m_samplers;
-        std::vector<Texture> m_textures;
-
-        Image loadImage(uint8_t *data, const glm::ivec2& size);
-        void loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset);
-        void loadSamplers(const fastgltf::Asset& asset);
-        void loadTextures(fastgltf::Asset& asset);
-
-
 
         struct GpuMaterial {
             // Textures
@@ -127,12 +98,31 @@ class App {
             float alphaCutoff;
         };
 
-        std::unique_ptr<Buffer> m_gpuMaterials;
+        std::vector<std::shared_ptr<Mesh>> m_meshes;
+        std::vector<MeshInstance> m_meshInstances;
+        std::vector<GpuPrimitiveInstance> m_gpuPrimitiveInstances;
+        std::unique_ptr<Buffer> m_gpuPrimitiveInstancesBuffer;
 
+        std::map<uint32_t, std::shared_ptr<Image>> m_images;
+        std::unique_ptr<Buffer> m_gpuMaterials;
+        std::vector<VkSampler> m_samplers;
+        std::vector<Texture> m_textures;
+
+        void loadMeshes(fastgltf::Asset& asset);
+        Primitive loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive);
+        void loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform = glm::mat4(1));
+        void loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene);
+
+        Image loadImage(uint8_t *data, const glm::ivec2& size);
+        void loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset);
+        void loadSamplers(const fastgltf::Asset& asset);
+        void loadTextures(fastgltf::Asset& asset);
         void loadMaterials(const fastgltf::Asset& asset);
 
+        void loadAssetsFromFile(const char *filePath);
 
-    private: // Goofy raytracing
+
+    private: // Raytracing preparation
         struct PushConstantData {
             glm::mat4 inverseView;
             glm::mat4 inverseProjection;
@@ -145,13 +135,20 @@ class App {
         VkPipeline m_raytracingPipeline{};
 
         std::unique_ptr<Image> m_outputImage;
-        uint32_t m_outputImageBindlessId{};
 
         void createRaytracingPipeline();
         void createShaderBindingTable();
+        void prepareOutputImage();
+        void getRaytracingProperties();
 
         VkShaderModule compileShader(const std::string& path, EShLanguage stage);
 
+
+    private: // Runtime
+        void handleEvents(float deltaTime);
+        void traceRays(VkCommandBuffer commandBuffer);
+        void transferOutputImageToSwapchain(VkCommandBuffer commandBuffer);
+        void bindDescriptors(VkCommandBuffer commandBuffer);
 
 
     private:
@@ -164,7 +161,6 @@ class App {
 
         std::unique_ptr<Buffer> m_topLevelAccelerationStructureBuffer;
         VkAccelerationStructureKHR m_topLevelAccelerationStructure{};
-        uint32_t m_topLevelAccelerationStructureBindlessId{};
 
         std::unique_ptr<Buffer> m_raygenShaderBindingTable;
         void *m_mappedRaygenShaderBindingTable{};

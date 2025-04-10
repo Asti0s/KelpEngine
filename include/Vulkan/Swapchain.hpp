@@ -32,25 +32,19 @@ class Swapchain {
         void resize(const glm::ivec2& size);
 
         /**
-         * @brief Wait for new frame to be ready to be rendered
-         * This function will start a new command buffer to be recorded that can be retrieved with getCurrentCommandBuffer()
-         * /!\ Must be called at each frame before any rendering commands and before acquireImage
+         * @brief Begin the frame by acquiring an image and beginning a new command buffer
+         *
+         * @return The command buffer to record commands into
          */
-        void beginFrame();
+        VkCommandBuffer beginFrame();
 
         /**
-         * @brief Wait for the next image to render to be available
-         * This function will make the current image available to be rendered to
-         * /!\ Must be called after beginFrame and before trying to interact with the current swapchain image
+         * @brief End the frame by submitting the command buffer and presenting the image
+         *
+         * @param commandBuffer The command buffer to submit
+         * @param waitStage The pipeline stage to wait on before presenting the image
          */
-        void acquireImage();
-
-        /**
-         * @brief End the current frame rendering and present the image
-         * This function will submit the current command buffer to the graphics queue and present the image to the screen
-         * /!\ Must be called after acquireImage and beginFrame
-         */
-        void endFrame();
+        void endFrame(VkCommandBuffer commandBuffer, VkPipelineStageFlags waitStage);
 
 
         /* Getters */
@@ -61,7 +55,6 @@ class Swapchain {
 
         [[nodiscard]] uint32_t          getCurrentFrameIndex()      const noexcept { return m_currentFrameIndex; }
         [[nodiscard]] uint32_t          getCurrentImageIndex()      const noexcept { return m_currentImageIndex; }
-        [[nodiscard]] VkCommandBuffer   getCurrentCommandBuffer()   const noexcept { return m_renderCommandBuffers[m_currentFrameIndex]; }
         [[nodiscard]] VkImageView       getCurrentImageView()       const noexcept { return m_imageViews[m_currentImageIndex]; }
         [[nodiscard]] VkImage           getCurrentImage()           const noexcept { return m_images[m_currentImageIndex]; }
 

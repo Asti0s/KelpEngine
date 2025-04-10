@@ -27,57 +27,28 @@
 #include <vector>
 
 App::App() {
-    const auto prepareOutputImage = [&](const std::unique_ptr<Image>& outputImage) {
-        VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
-            outputImage->cmdImagebarrier(commandBuffer,
-                VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-                VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-                0,
-                VK_ACCESS_SHADER_WRITE_BIT,
-                VK_IMAGE_LAYOUT_UNDEFINED,
-                VK_IMAGE_LAYOUT_GENERAL
-            );
-        } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
-    };
-
     m_window->setResizeCallback([&](const glm::ivec2& size) {
         m_device->waitIdle();
         m_swapchain.resize(size);
 
         m_camera.setPerspective(90, static_cast<float>(size.x) / static_cast<float>(size.y), 0.01, 100);
-
-        m_outputImage = std::make_unique<Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
-        m_outputImageBindlessId = m_descriptorManager.storeImage(m_outputImage->getImageView());
-        prepareOutputImage(m_outputImage);
+        prepareOutputImage();
     });
 
     m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.01, 100);
 
-    m_outputImage = std::make_unique<Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
-    m_outputImageBindlessId = m_descriptorManager.storeImage(m_outputImage->getImageView());
-    prepareOutputImage(m_outputImage);
-
-    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR,
-    };
-    VkPhysicalDeviceProperties2 physicalDeviceProperties2{
-        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
-        .pNext = &rayTracingPipelineProperties,
-    };
-    vkGetPhysicalDeviceProperties2(m_device->getPhysicalDevice(), &physicalDeviceProperties2);
-    m_raytracingProperties = rayTracingPipelineProperties;
-
+    loadAssetsFromFile("../assets/sponza.glb");
+    prepareOutputImage();
+    getRaytracingProperties();
     createRaytracingPipeline();
     createShaderBindingTable();
-
-    loadAssetsFromFile("../assets/sponza.glb");
 }
 
 App::~App() {
     m_device->waitIdle();
 
     for (const auto& mesh : m_meshes)
-        for (const auto& primitive : mesh.primitives)
+        for (const auto& primitive : mesh->primitives)
             if (primitive.accelerationStructure.handle != VK_NULL_HANDLE)
                 vkDestroyAccelerationStructureKHR(m_device->getHandle(), primitive.accelerationStructure.handle, VK_NULL_HANDLE);
     for (const auto& sampler : m_samplers)
@@ -99,6 +70,46 @@ App::~App() {
 
     if (m_pipelineLayout != VK_NULL_HANDLE)
         vkDestroyPipelineLayout(m_device->getHandle(), m_pipelineLayout, VK_NULL_HANDLE);
+}
+
+void App::getRaytracingProperties() {
+    VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR,
+    };
+    VkPhysicalDeviceProperties2 physicalDeviceProperties2{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+        .pNext = &rayTracingPipelineProperties,
+    };
+    vkGetPhysicalDeviceProperties2(m_device->getPhysicalDevice(), &physicalDeviceProperties2);
+    m_raytracingProperties = rayTracingPipelineProperties;
+}
+
+void App::prepareOutputImage() {
+    m_outputImage = std::make_unique<Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
+    m_descriptorManager.storeImage(m_outputImage->getImageView(), 0);
+
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+        const VkImageMemoryBarrier imageBarrier{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = m_outputImage->getHandle(),
+            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+        };
+
+        vkCmdPipelineBarrier(commandBuffer,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+            0,
+            0, nullptr,
+            0, nullptr,
+            1, &imageBarrier
+        );
+    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 }
 
 static size_t align(size_t value, size_t alignment) {   // NOLINT
@@ -299,6 +310,121 @@ void App::handleEvents(float deltaTime) {
     m_camera.update(deltaTime);
 }
 
+void App::traceRays(VkCommandBuffer commandBuffer) {
+    const uint32_t handleSizeAligned = align(m_raytracingProperties.shaderGroupHandleSize, m_raytracingProperties.shaderGroupHandleAlignment);
+
+    const VkStridedDeviceAddressRegionKHR raygenShaderSbtEntry{
+        .deviceAddress = m_raygenShaderBindingTable->getDeviceAddress(),
+        .stride = handleSizeAligned,
+        .size = handleSizeAligned,
+    };
+
+    const VkStridedDeviceAddressRegionKHR missShaderSbtEntry{
+        .deviceAddress = m_missShaderBindingTable->getDeviceAddress(),
+        .stride = handleSizeAligned,
+        .size = handleSizeAligned,
+    };
+
+    const VkStridedDeviceAddressRegionKHR hitShaderSbtEntry{
+        .deviceAddress = m_hitShaderBindingTable->getDeviceAddress(),
+        .stride = handleSizeAligned,
+        .size = handleSizeAligned,
+    };
+
+    const VkStridedDeviceAddressRegionKHR callableShaderSbtEntry{};
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_raytracingPipeline);
+    vkCmdTraceRaysKHR(commandBuffer, &raygenShaderSbtEntry, &missShaderSbtEntry, &hitShaderSbtEntry, &callableShaderSbtEntry, m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1);
+}
+
+void App::transferOutputImageToSwapchain(VkCommandBuffer commandBuffer) {
+    // Transition ouput image to transfer src
+    const VkImageMemoryBarrier outputGeneralToTransferSrcBarrier{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = m_outputImage->getHandle(),
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &outputGeneralToTransferSrcBarrier);
+
+
+    // Transition swapchain image to transfer dst
+    const VkImageMemoryBarrier swapchainUndefinedToTransferDstBarrier{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = 0,
+        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = m_swapchain.getCurrentImage(),
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &swapchainUndefinedToTransferDstBarrier);
+
+
+    // Copy output image to swapchain image
+    const VkImageCopy imageCopy{
+        .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .srcOffset = { 0, 0, 0 },
+        .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
+        .dstOffset = { 0, 0, 0 },
+        .extent = { m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1 },
+    };
+
+    vkCmdCopyImage(commandBuffer, m_outputImage->getHandle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_swapchain.getCurrentImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
+
+
+    // Transition output image to general
+    const VkImageMemoryBarrier outputTransferSrcToGeneralBarrier{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
+        .dstAccessMask = 0,
+        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = m_outputImage->getHandle(),
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &outputTransferSrcToGeneralBarrier);
+
+
+    // Transition swapchain image to present
+    const VkImageMemoryBarrier swapchainTransferDstToPresentBarrier{
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+        .dstAccessMask = 0,
+        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .image = m_swapchain.getCurrentImage(),
+        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
+    };
+
+    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &swapchainTransferDstToPresentBarrier);
+}
+
+void App::bindDescriptors(VkCommandBuffer commandBuffer) {
+    vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1, &m_descriptorManager.getDescriptorSet(), 0, nullptr);
+
+    const PushConstantData pushConstantData{
+        .inverseView = glm::inverse(m_camera.getViewMatrix()),
+        .inverseProjection = glm::inverse(m_camera.getProjectionMatrix()),
+        .gpuPrimitiveInstancesBufferAddress = m_gpuPrimitiveInstancesBuffer->getDeviceAddress(),
+        .gpuMaterialsBufferAddress = m_gpuMaterials->getDeviceAddress(),
+    };
+    vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstantData), &pushConstantData);
+}
+
 void App::run() {
     std::chrono::high_resolution_clock::time_point loopStart = std::chrono::high_resolution_clock::now();
     std::chrono::high_resolution_clock::time_point loopEnd = std::chrono::high_resolution_clock::now();
@@ -309,111 +435,13 @@ void App::run() {
 
         handleEvents(deltaTime);
 
-        m_swapchain.beginFrame();
-        VkCommandBuffer commandBuffer = m_swapchain.getCurrentCommandBuffer();
-
-
-        // Bind things
-        vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_raytracingPipeline);
-        vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1, &m_descriptorManager.getDescriptorSet(), 0, nullptr);
-
-        const PushConstantData pushConstantData{
-            .inverseView = glm::inverse(m_camera.getViewMatrix()),
-            .inverseProjection = glm::inverse(m_camera.getProjectionMatrix()),
-            .gpuPrimitiveInstancesBufferAddress = m_gpuPrimitiveInstancesBuffer->getDeviceAddress(),
-            .gpuMaterialsBufferAddress = m_gpuMaterials->getDeviceAddress(),
-        };
-        vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstantData), &pushConstantData);
-
-
-        // Trace rays
-        const uint32_t handleSizeAligned = align(m_raytracingProperties.shaderGroupHandleSize, m_raytracingProperties.shaderGroupHandleAlignment);
-
-        const VkStridedDeviceAddressRegionKHR raygenShaderSbtEntry{
-            .deviceAddress = m_raygenShaderBindingTable->getDeviceAddress(),
-            .stride = handleSizeAligned,
-            .size = handleSizeAligned,
-        };
-
-        const VkStridedDeviceAddressRegionKHR missShaderSbtEntry{
-            .deviceAddress = m_missShaderBindingTable->getDeviceAddress(),
-            .stride = handleSizeAligned,
-            .size = handleSizeAligned,
-        };
-
-        const VkStridedDeviceAddressRegionKHR hitShaderSbtEntry{
-            .deviceAddress = m_hitShaderBindingTable->getDeviceAddress(),
-            .stride = handleSizeAligned,
-            .size = handleSizeAligned,
-        };
-
-        const VkStridedDeviceAddressRegionKHR callableShaderSbtEntry{};
-        vkCmdTraceRaysKHR(commandBuffer, &raygenShaderSbtEntry, &missShaderSbtEntry, &hitShaderSbtEntry, &callableShaderSbtEntry, m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1);
-
-
-        // Transition ouput image to transfer source
-        m_outputImage->cmdImagebarrier(commandBuffer,
-            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_ACCESS_SHADER_WRITE_BIT,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            VK_IMAGE_LAYOUT_GENERAL,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL
-        );
-
-
-        // Transition swapchain image to transfer destination
-        m_swapchain.acquireImage();
-
-        VkImageMemoryBarrier swapchainImageBarrier{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            .srcAccessMask = 0,
-            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = m_swapchain.getCurrentImage(),
-            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-        };
-
-        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &swapchainImageBarrier);
-
-
-        // Copy output image to swapchain image
-        const VkImageCopy imageCopy{
-            .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-            .srcOffset = { 0, 0, 0 },
-            .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-            .dstOffset = { 0, 0, 0 },
-            .extent = { m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1 },
-        };
-
-        vkCmdCopyImage(commandBuffer, m_outputImage->getHandle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_swapchain.getCurrentImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
-
-
-        // Transition swapchain image to present
-        swapchainImageBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-        swapchainImageBarrier.dstAccessMask = VK_ACCESS_MEMORY_READ_BIT;
-        swapchainImageBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
-        swapchainImageBarrier.newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &swapchainImageBarrier);
-
-
-        // Transition output image to general
-        m_outputImage->cmdImagebarrier(commandBuffer,
-            VK_PIPELINE_STAGE_TRANSFER_BIT,
-            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-            VK_ACCESS_TRANSFER_READ_BIT,
-            VK_ACCESS_SHADER_WRITE_BIT,
-            VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-            VK_IMAGE_LAYOUT_GENERAL
-        );
-
-
-        // End frame
-        m_swapchain.endFrame();
+        VkCommandBuffer commandBuffer = m_swapchain.beginFrame();
+        {   // Render
+            bindDescriptors(commandBuffer);
+            traceRays(commandBuffer);
+            transferOutputImageToSwapchain(commandBuffer);
+        }
+        m_swapchain.endFrame(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT);
 
         loopEnd = std::chrono::high_resolution_clock::now();
         deltaTime = std::chrono::duration<float>(loopEnd - loopStart).count();

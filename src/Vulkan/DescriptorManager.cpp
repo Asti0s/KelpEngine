@@ -23,25 +23,28 @@ DescriptorManager::~DescriptorManager() {
 }
 
 uint32_t DescriptorManager::storeImage(VkImageView imageView) {
+    storeImage(imageView, m_storageImageCount);
+    m_storageImageCount++;
+    return m_storageImageCount - 1;
+}
+
+void DescriptorManager::storeImage(VkImageView imageView, uint32_t index) {
     const VkDescriptorImageInfo imageInfo{
         .imageView = imageView,
-        .imageLayout = VK_IMAGE_LAYOUT_GENERAL
+        .imageLayout = VK_IMAGE_LAYOUT_GENERAL,
     };
 
     const VkWriteDescriptorSet write{
         .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
         .dstSet = m_descriptorSet,
         .dstBinding = STORAGE_IMAGE_BINDING,
-        .dstArrayElement = m_storageImageCount,
+        .dstArrayElement = index,
         .descriptorCount = 1,
         .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
         .pImageInfo = &imageInfo
     };
 
     vkUpdateDescriptorSets(m_device->getHandle(), 1, &write, 0, nullptr);
-
-    m_storageImageCount++;
-    return m_storageImageCount - 1;
 }
 
 uint32_t DescriptorManager::storeSampledImage(VkImageView imageView, VkSampler sampler) {
@@ -111,7 +114,7 @@ void DescriptorManager::createDescriptorSetLayout() {
     for (uint32_t i = 0; i < descriptorCount; ++i) {
         bindings[i].binding = i;
         bindings[i].descriptorType = types[i];
-        bindings[i].descriptorCount = 1000;
+        bindings[i].descriptorCount = types[i] == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR ? 1 : 1000;
         bindings[i].stageFlags = VK_SHADER_STAGE_ALL;
         flags[i] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     }

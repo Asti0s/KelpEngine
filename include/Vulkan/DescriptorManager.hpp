@@ -37,6 +37,14 @@ class DescriptorManager {
         uint32_t storeImage(VkImageView imageView);
 
         /**
+         * @brief Store an image view in the array of storage images of the descriptor set at index index.
+         *
+         * @param imageView image view to store
+         * @param index index of the image in the array
+         */
+        void storeImage(VkImageView imageView, uint32_t index);
+
+        /**
          * @brief Store an image view and a sampler in the array of combined image samplers of the descriptor set and return the dst array index.
          * The index should be passed to the shader to access the image through the bindless texture extension at binding COMBINED_IMAGE_SAMPLER_BINDING.
          *

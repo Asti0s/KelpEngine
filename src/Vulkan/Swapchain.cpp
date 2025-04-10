@@ -189,7 +189,7 @@ void Swapchain::createSyncObjects() {
     }
 }
 
-void Swapchain::beginFrame() {
+VkCommandBuffer Swapchain::beginFrame() {
     // Wait for fence to signal (signaled by endFrame)
     VK_CHECK(vkWaitForFences(m_device->getHandle(), 1, &m_inFlightFences[m_currentFrameIndex], VK_TRUE, std::numeric_limits<uint64_t>::max()));
     VK_CHECK(vkResetFences(m_device->getHandle(), 1, &m_inFlightFences[m_currentFrameIndex]));
@@ -203,19 +203,16 @@ void Swapchain::beginFrame() {
 
     VkCommandBuffer commandBuffer = m_renderCommandBuffers[m_currentFrameIndex];
     VK_CHECK(vkBeginCommandBuffer(commandBuffer, &beginInfo));
-}
 
-void Swapchain::acquireImage() {
+
+    // Acquire next image
     VK_CHECK(vkAcquireNextImageKHR(m_device->getHandle(), m_swapchain, std::numeric_limits<uint64_t>::max(), m_imageAvailableSemaphores[m_currentFrameIndex], VK_NULL_HANDLE, &m_currentImageIndex));
+
+    return commandBuffer;
 }
 
-void Swapchain::endFrame() {
-    VkCommandBuffer commandBuffer = m_renderCommandBuffers[m_currentFrameIndex];
-
-
+void Swapchain::endFrame(VkCommandBuffer commandBuffer, VkPipelineStageFlags waitStage) {
     // Submit command buffer to graphics queue
-    constexpr VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-
     const VkSubmitInfo submitInfo{
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,

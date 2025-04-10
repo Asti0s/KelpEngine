@@ -253,9 +253,14 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
         .pNext = &vulkan12Features,
     };
 
+    VkPhysicalDeviceVulkan14Features vulkan14Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+        .pNext = &vulkan13Features,
+    };
+
     VkPhysicalDeviceFeatures2 deviceFeatures2{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &vulkan13Features,
+        .pNext = &vulkan14Features,
     };
 
     vkGetPhysicalDeviceFeatures2(device, &deviceFeatures2);
@@ -268,6 +273,7 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
         && static_cast<bool>(vulkan12Features.runtimeDescriptorArray)
         && static_cast<bool>(vulkan12Features.scalarBlockLayout)
         && static_cast<bool>(vulkan13Features.dynamicRendering)
+        && static_cast<bool>(vulkan14Features.hostImageCopy)
         && static_cast<bool>(deviceFeatures2.features.samplerAnisotropy)
         && static_cast<bool>(accelerationStructureFeatures.accelerationStructure)
         && static_cast<bool>(accelerationStructureFeatures.descriptorBindingAccelerationStructureUpdateAfterBind)
@@ -427,9 +433,16 @@ void Device::createDevice() {
         .dynamicRendering = VK_TRUE,
     };
 
+    VkPhysicalDeviceVulkan14Features vulkan14Features{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_4_FEATURES,
+        .pNext = &vulkan13Features,
+        .hostImageCopy = VK_TRUE,
+    };
+
+
     VkPhysicalDeviceFeatures2 deviceFeatures2{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-        .pNext = &vulkan13Features,
+        .pNext = &vulkan14Features,
         .features = { .samplerAnisotropy = VK_TRUE }
     };
 
@@ -525,7 +538,7 @@ void Device::createInstance() {
         .applicationVersion = VK_MAKE_VERSION(1, 0, 0),
         .pEngineName = "No engine",
         .engineVersion = VK_MAKE_VERSION(1, 0, 0),
-        .apiVersion = VK_API_VERSION_1_3,
+        .apiVersion = VK_API_VERSION_1_4,
     };
 
     const VkInstanceCreateInfo instanceCreateInfo = {
