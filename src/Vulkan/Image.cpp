@@ -30,7 +30,7 @@ Image::Image(const std::shared_ptr<Device>& device, const VkExtent3D& extent, Vk
 
     constexpr VmaAllocationCreateInfo allocationInfo = {
         .flags = VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT,
-        .usage = VMA_MEMORY_USAGE_AUTO
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
     };
 
     VK_CHECK(vmaCreateImage(m_device->getAllocator(), &imageInfo, &allocationInfo, &m_image, &m_allocation, nullptr));

@@ -74,58 +74,6 @@ void App::loadMaterials(const fastgltf::Asset& asset) {
     } m_device->endSingleTimeCommands(Device::Graphics, commandBuffer);
 }
 
-Image App::loadImage(uint8_t *data, const glm::ivec2& size) {
-    // Image creation
-    const int mipLevels = static_cast<int>(std::floor(std::log2(std::max(size.x, size.y)))) + 1;
-    Image image = Image(m_device, VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_HOST_TRANSFER_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, mipLevels);
-
-    const VkHostImageLayoutTransitionInfoEXT hostImageLayoutTransitionInfo{
-        .sType = VK_STRUCTURE_TYPE_HOST_IMAGE_LAYOUT_TRANSITION_INFO_EXT,
-        .image = image.getHandle(),
-        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .subresourceRange = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .baseMipLevel = 0,
-            .levelCount = static_cast<uint32_t>(mipLevels),
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-    };
-    VK_CHECK(vkTransitionImageLayout(m_device->getHandle(), 1, &hostImageLayoutTransitionInfo));
-
-    const VkMemoryToImageCopy copyRegion{
-        .sType = VK_STRUCTURE_TYPE_MEMORY_TO_IMAGE_COPY,
-        .pHostPointer = data,
-        .imageSubresource = {
-            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-            .mipLevel = 0,
-            .baseArrayLayer = 0,
-            .layerCount = 1,
-        },
-        .imageExtent = {
-            .width = static_cast<uint32_t>(size.x),
-            .height = static_cast<uint32_t>(size.y),
-            .depth = 1,
-        },
-    };
-
-    const VkCopyMemoryToImageInfo copyMemoryToImageInfo{
-        .sType = VK_STRUCTURE_TYPE_COPY_MEMORY_TO_IMAGE_INFO,
-        .dstImage = image.getHandle(),
-        .dstImageLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .regionCount = 1,
-        .pRegions = &copyRegion,
-    };
-    VK_CHECK(vkCopyMemoryToImage(m_device->getHandle(), &copyMemoryToImageInfo));
-
-
-    // Cleanup
-    stbi_image_free(data);
-
-    return std::move(image);
-}
-
 void App::loadSamplers(const fastgltf::Asset& asset) {
     m_samplers.reserve(asset.samplers.size());
 
@@ -217,11 +165,59 @@ void App::loadTextures(fastgltf::Asset& asset) {
     }
 }
 
+Image App::loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandMutex) {
+    // Image creation
+    const int mipLevels = static_cast<int>(std::floor(std::log2(std::max(size.x, size.y)))) + 1;
+    Image image = Image(m_device, VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, mipLevels);
+
+
+    // Staging buffer creation and mapping with texture data
+    Buffer stagingBuffer = Buffer(m_device, static_cast<size_t>(size.x * size.y * 4), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    void *mappedData = nullptr;
+    stagingBuffer.map(&mappedData);
+    memcpy(mappedData, data, static_cast<int>(size.x * size.y * 4));
+    stagingBuffer.unmap();
+
+
+    // Transfer from staging buffer to image and generate mipmaps
+    commandMutex.lock();
+    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+        const VkImageMemoryBarrier barrier = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = image.getHandle(),
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = static_cast<uint32_t>(mipLevels),
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+        image.cmdCopyFromBuffer(commandBuffer, stagingBuffer.getHandle());
+        image.cmdGenerateMipmaps(commandBuffer);
+    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+    commandMutex.unlock();
+
+
+    // Cleanup
+    stbi_image_free(data);
+
+    return std::move(image);
+}
+
 void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset) {
     std::vector<std::thread> loadingThreads(asset.images.size());
-    std::mutex loadedImagesMutex;
-
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
+    std::mutex commandMutex;
+    std::mutex pushMutex;
 
     for (uint32_t i = 0; i < asset.images.size(); i++) {
         loadingThreads[i] = std::thread([&, i]() {
@@ -247,7 +243,7 @@ void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& ass
                             if(data == nullptr)
                                 throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
 
-                            return loadImage(data, size);
+                            return loadImage(data, size, commandMutex);
                         }
                     }, buffer.data);
                 },
@@ -256,7 +252,7 @@ void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& ass
                     if(data == nullptr)
                         throw std::runtime_error("Error loading image bytes: " + std::string(stbi_failure_reason()));
 
-                    return loadImage(data, size);
+                    return loadImage(data, size, commandMutex);
                 },
                 [&](fastgltf::sources::URI& texturePath) -> Image {
                     const std::filesystem::path path = std::filesystem::path(filePath).parent_path().append(texturePath.uri.c_str());
@@ -267,39 +263,24 @@ void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& ass
                     if (data == nullptr)
                         throw std::runtime_error("Failed to load texture \"" + path.string() + "\": " + std::string(stbi_failure_reason()));
 
-                    return loadImage(data, size);
+                    return loadImage(data, size, commandMutex);
                 },
             }, image.data));
 
-            loadedImagesMutex.lock();
             std::clog << "Loaded image " << i << std::endl;
+            pushMutex.lock();
             m_images[i] = std::move(newImage);
-            loadedImagesMutex.unlock();
+            pushMutex.unlock();
         });
     }
 
-    for (auto& thread : loadingThreads) {
+    for (auto& thread : loadingThreads)
         if (thread.joinable())
             thread.join();
-    }
 
-    std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<float> elapsedTime = end - start;
-    float total = elapsedTime.count();
-    std::clog << "Loaded all images in " << elapsedTime.count() << " seconds" << std::endl;
-
-    start = std::chrono::high_resolution_clock::now();
-
-    VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
-        for (auto& [index, image] : m_images)
-            image->cmdGenerateMipmaps(commandBuffer);
-    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
-
-    end = std::chrono::high_resolution_clock::now();
-    elapsedTime = end - start;
-    total += elapsedTime.count();
-    std::clog << "Generated mipmaps in " << elapsedTime.count() << " seconds" << std::endl;
-    std::clog << "Total texture loading time: " << total << " seconds" << std::endl;
+    const std::chrono::high_resolution_clock::time_point end = std::chrono::high_resolution_clock::now();
+    const float elapsedTime = std::chrono::duration<float>(end - start).count();
+    std::clog << "Loaded all images in " << elapsedTime << " seconds" << std::endl;
 }
 
 void App::loadMeshes(fastgltf::Asset& asset) {
@@ -403,7 +384,7 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
     const VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
         .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR,
         .geometryCount = 1,
         .pGeometries = &accelerationStructureGeometry,
     };
@@ -423,7 +404,7 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
 
     // Acceleration structure creation
     Buffer accelerationStructureBuffer = Buffer(m_device, accelerationStructureBuildSizesInfo.accelerationStructureSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
-    VkAccelerationStructureKHR accelerationStructureHandle = VK_NULL_HANDLE;
+    VkAccelerationStructureKHR originAccelerationStructure = VK_NULL_HANDLE;
 
     const VkAccelerationStructureCreateInfoKHR accelerationStructureCreateInfo{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
@@ -431,7 +412,7 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
         .size = accelerationStructureBuildSizesInfo.accelerationStructureSize,
         .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
     };
-    VK_CHECK(vkCreateAccelerationStructureKHR(m_device->getHandle(), &accelerationStructureCreateInfo, nullptr, &accelerationStructureHandle));
+    VK_CHECK(vkCreateAccelerationStructureKHR(m_device->getHandle(), &accelerationStructureCreateInfo, nullptr, &originAccelerationStructure));
 
 
     // Acceleration structure build
@@ -440,9 +421,9 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
     const VkAccelerationStructureBuildGeometryInfoKHR accelerationBuildGeometryInfo{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
         .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR,
+        .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR,
         .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
-        .dstAccelerationStructure = accelerationStructureHandle,
+        .dstAccelerationStructure = originAccelerationStructure,
         .geometryCount = 1,
         .pGeometries = &accelerationStructureGeometry,
         .scratchData {
@@ -467,12 +448,66 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
     } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
-    // Get acceleration structure device address
-    const VkAccelerationStructureDeviceAddressInfoKHR accelerationDeviceAddressInfo{
-        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
-        .accelerationStructure = accelerationStructureHandle,
+    // Query compacted size
+    VkQueryPoolCreateInfo queryPoolCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
+        .queryType = VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR,
+        .queryCount = 1,
     };
-    const VkDeviceAddress accelerationStructureAddress = vkGetAccelerationStructureDeviceAddressKHR(m_device->getHandle(), &accelerationDeviceAddressInfo);
+    VkQueryPool queryPool = VK_NULL_HANDLE;
+    VK_CHECK(vkCreateQueryPool(m_device->getHandle(), &queryPoolCreateInfo, nullptr, &queryPool));
+
+    commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+        vkCmdResetQueryPool(commandBuffer, queryPool, 0, 1);
+        vkCmdWriteAccelerationStructuresPropertiesKHR(commandBuffer, 1, &originAccelerationStructure, VK_QUERY_TYPE_ACCELERATION_STRUCTURE_COMPACTED_SIZE_KHR, queryPool, 0);
+    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+
+    VkDeviceSize compactedSize = 0;
+    VK_CHECK(vkGetQueryPoolResults(m_device->getHandle(), queryPool, 0, 1, sizeof(VkDeviceSize), &compactedSize, sizeof(VkDeviceSize), VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WAIT_BIT));
+
+    vkDestroyQueryPool(m_device->getHandle(), queryPool, nullptr);
+
+    std::cout << "Original size: " << static_cast<float>(accelerationStructureBuildSizesInfo.accelerationStructureSize) / 1024 << " KB" << std::endl;
+    std::cout << "Compacted size: " << static_cast<float>(compactedSize) / 1024 << " KB" << std::endl;
+    std::cout << "Compaction ratio: " << static_cast<float>(compactedSize) / static_cast<float>(accelerationStructureBuildSizesInfo.accelerationStructureSize) * 100 << " %" << std::endl;
+    static float totalGained = 0;
+    totalGained += static_cast<float>(accelerationStructureBuildSizesInfo.accelerationStructureSize - compactedSize) / 1024 / 1024;
+    std::cout << "Total gained: " << totalGained << " MB" << std::endl << std::endl;
+
+
+    // Compacted acceleration structure creation
+    Buffer compactedAccelerationStructureBuffer = Buffer(m_device, compactedSize, VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
+    VkAccelerationStructureKHR compactedAccelerationStructure = VK_NULL_HANDLE;
+    const VkAccelerationStructureCreateInfoKHR compactedAccelerationStructureCreateInfo{
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_CREATE_INFO_KHR,
+        .buffer = compactedAccelerationStructureBuffer.getHandle(),
+        .size = compactedSize,
+        .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
+    };
+    VK_CHECK(vkCreateAccelerationStructureKHR(m_device->getHandle(), &compactedAccelerationStructureCreateInfo, nullptr, &compactedAccelerationStructure));
+
+    commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+        const VkCopyAccelerationStructureInfoKHR copyAccelerationStructureInfo{
+            .sType = VK_STRUCTURE_TYPE_COPY_ACCELERATION_STRUCTURE_INFO_KHR,
+            .src = originAccelerationStructure,
+            .dst = compactedAccelerationStructure,
+            .mode = VK_COPY_ACCELERATION_STRUCTURE_MODE_COMPACT_KHR,
+        };
+
+        vkCmdCopyAccelerationStructureKHR(commandBuffer, &copyAccelerationStructureInfo);
+    } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+
+
+    // Original acceleration structure cleanup
+    vkDestroyAccelerationStructureKHR(m_device->getHandle(), originAccelerationStructure, nullptr);
+
+
+    // Get acceleration structure device address
+    const VkAccelerationStructureDeviceAddressInfoKHR compactedAccelerationDeviceAddressInfo{
+        .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_DEVICE_ADDRESS_INFO_KHR,
+        .accelerationStructure = compactedAccelerationStructure,
+    };
+    const VkDeviceAddress compactedAccelerationStructureAddress = vkGetAccelerationStructureDeviceAddressKHR(m_device->getHandle(), &compactedAccelerationDeviceAddressInfo);
 
 
     // New mesh creation
@@ -481,9 +516,9 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
         .indexBuffer = std::move(indexBuffer),
         .indexCount = static_cast<uint32_t>(indices.size()),
         .accelerationStructure = {
-            .handle = accelerationStructureHandle,
-            .deviceAddress = accelerationStructureAddress,
-            .buffer = std::move(accelerationStructureBuffer),
+            .handle = compactedAccelerationStructure,
+            .deviceAddress = compactedAccelerationStructureAddress,
+            .buffer = std::move(compactedAccelerationStructureBuffer),
         },
         .materialIndex = static_cast<int>(primitive.materialIndex.value()),
     };

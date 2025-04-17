@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <iterator>
 #include <memory>
 #include <stdexcept>
@@ -425,14 +426,42 @@ void App::bindDescriptors(VkCommandBuffer commandBuffer) {
     vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstantData), &pushConstantData);
 }
 
+void App::updateWindowTitle(float deltaTime) {
+    VkPhysicalDeviceMemoryBudgetPropertiesEXT memoryBudget{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT,
+    };
+
+    VkPhysicalDeviceMemoryProperties2 memoryProperties{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
+        .pNext = &memoryBudget,
+    };
+
+    vkGetPhysicalDeviceMemoryProperties2(m_device->getPhysicalDevice(), &memoryProperties);
+
+    uint32_t vramBudget = 0;
+    uint32_t vramUsage = 0;
+
+    for (uint32_t i = 0; i < memoryProperties.memoryProperties.memoryHeapCount; i++) {
+        if (static_cast<bool>(memoryProperties.memoryProperties.memoryHeaps[i].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)) {
+            vramBudget += memoryBudget.heapBudget[i] / 1024 / 1024;
+            vramUsage += memoryBudget.heapUsage[i] / 1024 / 1024;
+        }
+    }
+
+    m_window->setTitle(std::string("Kelp Engine | " + std::to_string(vramUsage) + " MB / " + std::to_string(vramBudget) + " MB | " + std::to_string(static_cast<int>(1.0F / deltaTime)) + " FPS").c_str());
+}
+
 void App::run() {
     std::chrono::high_resolution_clock::time_point loopStart = std::chrono::high_resolution_clock::now();
     std::chrono::high_resolution_clock::time_point loopEnd = std::chrono::high_resolution_clock::now();
     float deltaTime = 0;
+    float accum = 0;
+    uint32_t frameCount = 0;
 
     while (m_window->isOpen()) {
         loopStart = std::chrono::high_resolution_clock::now();
 
+        updateWindowTitle(deltaTime);
         handleEvents(deltaTime);
 
         VkCommandBuffer commandBuffer = m_swapchain.beginFrame();
@@ -445,7 +474,11 @@ void App::run() {
 
         loopEnd = std::chrono::high_resolution_clock::now();
         deltaTime = std::chrono::duration<float>(loopEnd - loopStart).count();
-
-        m_window->setTitle(std::string("Kelp Engine | " + std::to_string(static_cast<int>(1.0F / deltaTime)) + " FPS").c_str());
+        accum += deltaTime;
+        frameCount++;
     }
+
+    // avg frame time
+    std::cout << "Average frame time: " << accum / static_cast<float>(frameCount) * 1000.0F << " ms" << std::endl;
+    std::cout << "Average FPS: " << static_cast<float>(frameCount) / accum << std::endl;
 }

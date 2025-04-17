@@ -21,6 +21,7 @@
 #include <filesystem>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -113,7 +114,7 @@ class App {
         void loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform = glm::mat4(1));
         void loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene);
 
-        Image loadImage(uint8_t *data, const glm::ivec2& size);
+        Image loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandMutex);
         void loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset);
         void loadSamplers(const fastgltf::Asset& asset);
         void loadTextures(fastgltf::Asset& asset);
@@ -149,6 +150,7 @@ class App {
         void traceRays(VkCommandBuffer commandBuffer);
         void transferOutputImageToSwapchain(VkCommandBuffer commandBuffer);
         void bindDescriptors(VkCommandBuffer commandBuffer);
+        void updateWindowTitle(float deltaTime);
 
 
     private:
