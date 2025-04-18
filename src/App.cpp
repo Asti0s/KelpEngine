@@ -160,7 +160,7 @@ void App::createRaytracingPipeline() {
 
     VK_CHECK(vkCreatePipelineLayout(m_device->getHandle(), &pipelineLayoutCreateInfo, nullptr, &m_pipelineLayout));
 
-    const std::array<VkPipelineShaderStageCreateInfo, 3> shaderStages{
+    const std::array<VkPipelineShaderStageCreateInfo, 4> shaderStages{
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
@@ -177,6 +177,12 @@ void App::createRaytracingPipeline() {
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
             .module = compileShader("../shaders/closesthit.glsl", EShLangClosestHit),
+            .pName = "main",
+        },
+        VkPipelineShaderStageCreateInfo{
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
+            .module = compileShader("../shaders/anyhit.glsl", EShLangAnyHit),
             .pName = "main",
         },
     };
@@ -203,7 +209,7 @@ void App::createRaytracingPipeline() {
             .type = VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR,
             .generalShader = VK_SHADER_UNUSED_KHR,
             .closestHitShader = 2,
-            .anyHitShader = VK_SHADER_UNUSED_KHR,
+            .anyHitShader = 3,
             .intersectionShader = VK_SHADER_UNUSED_KHR,
         },
     };

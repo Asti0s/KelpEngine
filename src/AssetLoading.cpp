@@ -359,6 +359,11 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
     } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
+    // Get material
+    const fastgltf::Material& material = asset.materials.at(primitive.materialIndex.value());
+    std::cout << (material.alphaMode == fastgltf::AlphaMode::Opaque ? "Opaque" : "Transparent") << std::endl;
+
+
     // Acceleration structure get sizes
     const VkAccelerationStructureGeometryKHR accelerationStructureGeometry{
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_KHR,
@@ -378,7 +383,7 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
                 },
             },
         },
-        .flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
+        .flags = static_cast<VkGeometryFlagsKHR>(material.alphaMode == fastgltf::AlphaMode::Opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR),
     };
 
     const VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{
@@ -630,7 +635,6 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
                 },
             },
         },
-        .flags = VK_GEOMETRY_OPAQUE_BIT_KHR,
     };
 
     const VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{
