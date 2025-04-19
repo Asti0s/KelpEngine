@@ -142,7 +142,7 @@ class App {
         void prepareOutputImage();
         void getRaytracingProperties();
 
-        VkShaderModule compileShader(const std::string& path, EShLanguage stage);
+        VkShaderModule compileShader(const std::string& path, EShLanguage stage, const char *preamble);
 
 
     private: // Runtime

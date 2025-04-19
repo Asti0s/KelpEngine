@@ -32,11 +32,11 @@ App::App() {
         m_device->waitIdle();
         m_swapchain.resize(size);
 
-        m_camera.setPerspective(90, static_cast<float>(size.x) / static_cast<float>(size.y), 0.01, 100);
+        m_camera.setPerspective(90, static_cast<float>(size.x) / static_cast<float>(size.y), 0.1, 100);
         prepareOutputImage();
     });
 
-    m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.01, 100);
+    m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.1, 100);
 
     loadAssetsFromFile("../assets/sponza.glb");
     prepareOutputImage();
@@ -164,25 +164,25 @@ void App::createRaytracingPipeline() {
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
-            .module = compileShader("../shaders/raygen.glsl", EShLangRayGen),
+            .module = compileShader("../shaders/raytracing.glsl", EShLangRayGen, "#define RAYGEN_SHADER\n"),
             .pName = "main",
         },
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_MISS_BIT_KHR,
-            .module = compileShader("../shaders/miss.glsl", EShLangMiss),
+            .module = compileShader("../shaders/raytracing.glsl", EShLangMiss, "#define MISS_SHADER\n"),
             .pName = "main",
         },
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
-            .module = compileShader("../shaders/closesthit.glsl", EShLangClosestHit),
+            .module = compileShader("../shaders/raytracing.glsl", EShLangClosestHit, "#define CLOSEST_HIT_SHADER\n"),
             .pName = "main",
         },
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
-            .module = compileShader("../shaders/anyhit.glsl", EShLangAnyHit),
+            .module = compileShader("../shaders/raytracing.glsl", EShLangAnyHit, "#define ANY_HIT_SHADER\n"),
             .pName = "main",
         },
     };
@@ -232,7 +232,7 @@ void App::createRaytracingPipeline() {
         vkDestroyShaderModule(m_device->getHandle(), shaderStage.module, nullptr);
 }
 
-VkShaderModule App::compileShader(const std::string& path, EShLanguage stage) {
+VkShaderModule App::compileShader(const std::string& path, EShLanguage stage, const char *preamble) {
     glslang::InitializeProcess();
 
     // Parameters
@@ -258,6 +258,7 @@ VkShaderModule App::compileShader(const std::string& path, EShLanguage stage) {
     shader.setEnvTarget(glslang::EshTargetSpv, glslang::EShTargetSpv_1_6);
     shader.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientVulkan, glslVersion);
     shader.setEntryPoint("main");
+    shader.setPreamble(preamble);
     shader.setStrings(shaderSource.data(), 1);
 
 
