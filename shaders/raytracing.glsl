@@ -4,6 +4,7 @@
 #extension GL_EXT_nonuniform_qualifier : enable
 #extension GL_EXT_buffer_reference : enable
 #extension GL_EXT_scalar_block_layout : enable
+#extension GL_GOOGLE_include_directive : enable
 
 
 
@@ -27,8 +28,8 @@ struct Material {
     // Textures
     int baseColorTexture;
     int normalTexture;
-    int metallicTexture;
-    int roughnessTexture;
+    int metallicRoughnessTexture;
+    int emissiveTexture;
 
     // Factors
     vec4 baseColorFactor;
@@ -197,8 +198,7 @@ vec3 computeBarycentrics(Vertex vertices[3], vec3 rayOrigin, vec3 rayDir) {
             return;
         }
 
-        const vec3 textureColor = textureGrad(textures[pc.materials.materials[primitive.materialIndex].baseColorTexture], texCoords, texGradX, texGradY).rgb;
-        payload.hitValue = textureColor;
+        payload.hitValue = textureGrad(textures[textureIndex], texCoords, texGradX, texGradY).rgb;
     }
 
 #endif // CLOSEST_HIT_SHADER

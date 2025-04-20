@@ -38,10 +38,6 @@ Swapchain::~Swapchain() {
     if (!m_renderCommandBuffers.empty())
         vkFreeCommandBuffers(m_device->getHandle(), m_device->getCommandPool(Device::Graphics), static_cast<uint32_t>(m_renderCommandBuffers.size()), m_renderCommandBuffers.data());
 
-    for (VkImageView imageView : m_imageViews)
-        if (imageView != nullptr)
-            vkDestroyImageView(m_device->getHandle(), imageView, nullptr);
-
     if (m_swapchain != nullptr)
         vkDestroySwapchainKHR(m_device->getHandle(), m_swapchain, nullptr);
 }
@@ -49,9 +45,8 @@ Swapchain::~Swapchain() {
 void Swapchain::resize(const glm::ivec2& size) {
     // Cleanup
     m_device->waitIdle();
-    for (VkImageView imageView : m_imageViews)
-        vkDestroyImageView(m_device->getHandle(), imageView, nullptr);
     vkDestroySwapchainKHR(m_device->getHandle(), m_swapchain, nullptr);
+    m_images.clear();
 
     // Recreate
     createSwapchain(size);
@@ -72,33 +67,12 @@ void Swapchain::createRenderCommandBuffers() {
 void Swapchain::createImageViews() {
     VK_CHECK(vkGetSwapchainImagesKHR(m_device->getHandle(), m_swapchain, &m_imageCount, nullptr));
 
-    m_images.resize(m_imageCount);
-    VK_CHECK(vkGetSwapchainImagesKHR(m_device->getHandle(), m_swapchain, &m_imageCount, m_images.data()));
+    std::vector<VkImage> swapchainImages(m_imageCount);
+    VK_CHECK(vkGetSwapchainImagesKHR(m_device->getHandle(), m_swapchain, &m_imageCount, swapchainImages.data()));
 
-    m_imageViews.resize(m_imageCount);
-    for (uint32_t i = 0; i < m_imageCount; i++) {
-        const VkImageViewCreateInfo createInfo{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .image = m_images[i],
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = m_imageFormat,
-            .components = {
-                .r = VK_COMPONENT_SWIZZLE_IDENTITY,
-                .g = VK_COMPONENT_SWIZZLE_IDENTITY,
-                .b = VK_COMPONENT_SWIZZLE_IDENTITY,
-                .a = VK_COMPONENT_SWIZZLE_IDENTITY
-            },
-            .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            }
-        };
-
-        VK_CHECK(vkCreateImageView(m_device->getHandle(), &createInfo, nullptr, &m_imageViews[i]));
-    }
+    std::vector<Image::SwapchainImageInfo> swapchainImageInfos(m_imageCount);
+    for (uint32_t i = 0; i < m_imageCount; i++)
+        m_images.push_back(Image::fromSwapchainImage(m_device, swapchainImages[i], {m_extent.width, m_extent.height, 1}, m_imageFormat));
 }
 
 void Swapchain::createSwapchain(const glm::ivec2& size) {

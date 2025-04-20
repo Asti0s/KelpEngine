@@ -9,66 +9,70 @@
 
 class Image {
     public:
-        Image(const std::shared_ptr<Device>& device, const VkExtent3D& extent, VkImageUsageFlags usage, VkFormat format, VkImageType type = VK_IMAGE_TYPE_2D, uint8_t mipLevels = 1, VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT);
+        struct CreateInfo {
+            VkExtent3D extent{};
+            VkImageUsageFlags usage{};
+            VkFormat format{};
+            VkImageType type = VK_IMAGE_TYPE_2D;
+            uint8_t mipLevels = 1;
+            VkImageAspectFlags aspectFlags = VK_IMAGE_ASPECT_COLOR_BIT;
+            VkSampleCountFlagBits samples = VK_SAMPLE_COUNT_1_BIT;
+            uint32_t arrayLayers = 1;
+            VkImageTiling tiling = VK_IMAGE_TILING_OPTIMAL;
+            VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        };
+
+        struct Layout {
+            VkImageLayout layout;
+            VkAccessFlags accessMask;
+            VkPipelineStageFlags stageFlags;
+        };
+
+        struct SwapchainImageInfo {
+            VkImage image;
+            VkExtent3D extent;
+            VkFormat format;
+        };
+
+    public:
+        explicit Image(const std::shared_ptr<Device>& device, const CreateInfo& createInfo);
+        static std::unique_ptr<Image> fromSwapchainImage(const std::shared_ptr<Device>& device, VkImage swapchainImage, const VkExtent3D& extent, VkFormat format);
         ~Image();
 
         Image(const Image&) = delete;
         Image& operator=(const Image&) = delete;
-
         Image(Image&& other) noexcept;
         Image& operator=(Image&& other) noexcept;
 
-
-        /**
-        * @brief Same as the other copyFromBuffer function, but this one takes a
-        * command buffer to record the copy commands into
-        *
-        * @param commandBuffer the command buffer to record the copy commands into
-        * @param buffer the buffer to copy the data from
-        */
+        void cmdTransitionLayout(VkCommandBuffer commandBuffer, const Layout& oldLayout, const Layout& newLayout, uint32_t baseMipLevel = 0, uint32_t levelCount = VK_REMAINING_MIP_LEVELS);
         void cmdCopyFromBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer);
+        void cmdGenerateMipmaps(VkCommandBuffer commandBuffer, const Layout& finalLayout);
+        void cmdCopyFromImage(VkCommandBuffer commandBuffer, const Image& srcImage);
 
-        /**
-        * @brief Generate mipmaps for the image
-        * The image must be in the following state:
-        * - Stage:  VK_PIPELINE_STAGE_TRANSFER_BIT
-        * - Access: VK_ACCESS_MEMORY_WRITE_BIT
-        * - Layout: VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-        *
-        * After the generation, the image will be in the following state:
-        * - Stage:  VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-        * - Access: VK_ACCESS_SHADER_READ_BIT
-        * - Layout: VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        *
-        * @param commandBuffer the command buffer to record the mipmaps generation commands into
-        */
-        void cmdGenerateMipmaps(VkCommandBuffer commandBuffer);
-
-
-        /* Getters */
         [[nodiscard]] VkImage getHandle() const { return m_image; }
         [[nodiscard]] VkImageView getImageView() const { return m_imageView; }
         [[nodiscard]] VmaAllocation getAllocation() const { return m_allocation; }
-
-        [[nodiscard]] const VkExtent3D& getExtent() const { return m_extent; }
-        [[nodiscard]] VkFormat getFormat() const { return m_format; }
-        [[nodiscard]] uint8_t getMipLevels() const { return m_mipLevels; }
-        [[nodiscard]] VkImageAspectFlags getAspectFlags() const { return m_aspectFlags; }
-
+        [[nodiscard]] const CreateInfo& getCreateInfo() const { return m_createInfo; }
 
     private:
-        void cleanup();
+        Image(const std::shared_ptr<Device>& device, VkImage existingImage, const CreateInfo& createInfo, bool ownsImage = false);
+        bool m_ownsImage{true}; // To avoid destroying swapchain images
 
+        void createImage();
+        void createImageView();
+        void cleanup();
+        [[nodiscard]] bool supportsLinearBlitting() const;
 
     private:
         std::shared_ptr<Device> m_device;
+        CreateInfo m_createInfo;
+        Layout m_currentLayout{
+            .layout = m_createInfo.initialLayout,
+            .accessMask = 0,
+            .stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+        };
 
-        VkImage m_image{};
-        VkImageView m_imageView{};
-        VmaAllocation m_allocation{};
-
-        VkExtent3D m_extent{};
-        VkFormat m_format{};
-        uint8_t m_mipLevels{};
-        VkImageAspectFlags m_aspectFlags{};
+        VkImage m_image{VK_NULL_HANDLE};
+        VkImageView m_imageView{VK_NULL_HANDLE};
+        VmaAllocation m_allocation{VK_NULL_HANDLE};
 };

@@ -14,7 +14,6 @@
 #include "glm/ext/vector_float3.hpp"
 #include "glm/ext/vector_float4.hpp"
 #include "glm/ext/vector_int2.hpp"
-#include "glslang/Public/ShaderLang.h"
 #include <vulkan/vulkan_core.h>
 
 #include <cstdint>
@@ -22,7 +21,6 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <string>
 #include <vector>
 
 class App {
@@ -141,8 +139,6 @@ class App {
         void createShaderBindingTable();
         void prepareOutputImage();
         void getRaytracingProperties();
-
-        VkShaderModule compileShader(const std::string& path, EShLanguage stage, const char *preamble);
 
 
     private: // Runtime

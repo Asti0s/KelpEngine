@@ -167,8 +167,14 @@ void App::loadTextures(fastgltf::Asset& asset) {
 
 Image App::loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandMutex) {
     // Image creation
-    const int mipLevels = static_cast<int>(std::floor(std::log2(std::max(size.x, size.y)))) + 1;
-    Image image = Image(m_device, VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1}, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_TYPE_2D, mipLevels);
+    const Image::CreateInfo imageCreateInfo{
+        .extent = VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1},
+        .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+        .type = VK_IMAGE_TYPE_2D,
+        .mipLevels = static_cast<uint8_t>(std::floor(std::log2(std::max(size.x, size.y))) + 1),
+    };
+    Image image = Image(m_device, imageCreateInfo);
 
 
     // Staging buffer creation and mapping with texture data
@@ -182,27 +188,22 @@ Image App::loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandM
     // Transfer from staging buffer to image and generate mipmaps
     commandMutex.lock();
     VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
-        const VkImageMemoryBarrier barrier = {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            .srcAccessMask = 0,
-            .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = image.getHandle(),
-            .subresourceRange = {
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = static_cast<uint32_t>(mipLevels),
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
+        image.cmdTransitionLayout(commandBuffer, Image::Layout{
+            .layout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .accessMask = 0,
+            .stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        }, Image::Layout{
+            .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            .accessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+            .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+        });
 
-        vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
         image.cmdCopyFromBuffer(commandBuffer, stagingBuffer.getHandle());
-        image.cmdGenerateMipmaps(commandBuffer);
+        image.cmdGenerateMipmaps(commandBuffer, Image::Layout{
+            .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            .accessMask = VK_ACCESS_SHADER_READ_BIT,
+            .stageFlags = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
+        });
     } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
     commandMutex.unlock();
 

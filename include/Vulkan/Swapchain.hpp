@@ -3,6 +3,7 @@
 #include "Config.hpp"
 #include "Device.hpp"
 
+#include "Vulkan/Image.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include "volk.h"
 #include <vulkan/vulkan_core.h>
@@ -48,15 +49,14 @@ class Swapchain {
 
 
         /* Getters */
-        [[nodiscard]] VkSwapchainKHR    getHandle()                 const noexcept { return m_swapchain; }
-        [[nodiscard]] VkFormat          getImageFormat()            const noexcept { return m_imageFormat; }
-        [[nodiscard]] const VkExtent2D& getExtent()                 const noexcept { return m_extent; }
-        [[nodiscard]] uint32_t          getImageCount()             const noexcept { return m_imageCount; }
+        [[nodiscard]] VkSwapchainKHR                    getHandle()                 const noexcept { return m_swapchain; }
+        [[nodiscard]] VkFormat                          getImageFormat()            const noexcept { return m_imageFormat; }
+        [[nodiscard]] const VkExtent2D&                 getExtent()                 const noexcept { return m_extent; }
+        [[nodiscard]] uint32_t                          getImageCount()             const noexcept { return m_imageCount; }
 
-        [[nodiscard]] uint32_t          getCurrentFrameIndex()      const noexcept { return m_currentFrameIndex; }
-        [[nodiscard]] uint32_t          getCurrentImageIndex()      const noexcept { return m_currentImageIndex; }
-        [[nodiscard]] VkImageView       getCurrentImageView()       const noexcept { return m_imageViews[m_currentImageIndex]; }
-        [[nodiscard]] VkImage           getCurrentImage()           const noexcept { return m_images[m_currentImageIndex]; }
+        [[nodiscard]] uint32_t                          getCurrentFrameIndex()      const noexcept { return m_currentFrameIndex; }
+        [[nodiscard]] uint32_t                          getCurrentImageIndex()      const noexcept { return m_currentImageIndex; }
+        [[nodiscard]] const std::unique_ptr<Image>&     getCurrentImage()           const noexcept { return m_images[m_currentImageIndex]; }
 
 
     private:
@@ -76,8 +76,7 @@ class Swapchain {
         uint32_t m_imageCount = 0;
 
         // Per frame data
-        std::vector<VkImageView> m_imageViews;
-        std::vector<VkImage> m_images;
+        std::vector<std::unique_ptr<Image>> m_images;
         std::array<VkCommandBuffer, Config::MAX_FRAMES_IN_FLIGHT> m_renderCommandBuffers{};
 
         // Sync objects

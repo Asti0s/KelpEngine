@@ -1,5 +1,6 @@
 #include "App.hpp"
 
+#include "ShaderCompiler.hpp"
 #include "Vulkan/Device.hpp"
 #include "Vulkan/Image.hpp"
 #include "Vulkan/Swapchain.hpp"
@@ -8,10 +9,7 @@
 #include "GLFW/glfw3.h"
 #include "glm/ext/vector_int2.hpp"
 #include "glm/matrix.hpp"
-#include "glslang/MachineIndependent/Versions.h"
-#include "glslang/Public/ResourceLimits.h"
 #include "glslang/Public/ShaderLang.h"
-#include "glslang/SPIRV/GlslangToSpv.h"
 #include <vulkan/vulkan_core.h>
 
 #include <array>
@@ -19,11 +17,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <fstream>
 #include <iostream>
-#include <iterator>
 #include <memory>
-#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -38,7 +33,7 @@ App::App() {
 
     m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.1, 100);
 
-    loadAssetsFromFile("../assets/sponza.glb");
+    loadAssetsFromFile("../assets/Arcade/Arcade.gltf");
     prepareOutputImage();
     getRaytracingProperties();
     createRaytracingPipeline();
@@ -86,29 +81,18 @@ void App::getRaytracingProperties() {
 }
 
 void App::prepareOutputImage() {
-    m_outputImage = std::make_unique<Image>(m_device, VkExtent3D{m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1}, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_R8G8B8A8_UNORM);
+    const Image::CreateInfo imageCreateInfo{
+        .extent = {m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1},
+        .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+        .format = VK_FORMAT_R8G8B8A8_UNORM,
+    };
+    m_outputImage = std::make_unique<Image>(m_device, imageCreateInfo);
     m_descriptorManager.storeImage(m_outputImage->getImageView(), 0);
 
     VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
-        const VkImageMemoryBarrier imageBarrier{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-            .srcAccessMask = 0,
-            .dstAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-            .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = m_outputImage->getHandle(),
-            .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-        };
-
-        vkCmdPipelineBarrier(commandBuffer,
-            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-            VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
-            0,
-            0, nullptr,
-            0, nullptr,
-            1, &imageBarrier
+        m_outputImage->cmdTransitionLayout(commandBuffer,
+            Image::Layout{ .layout = VK_IMAGE_LAYOUT_UNDEFINED, .accessMask = 0,                            .stageFlags = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT },
+            Image::Layout{ .layout = VK_IMAGE_LAYOUT_GENERAL,   .accessMask = VK_ACCESS_SHADER_WRITE_BIT,   .stageFlags = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR }
         );
     } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 }
@@ -164,25 +148,25 @@ void App::createRaytracingPipeline() {
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_RAYGEN_BIT_KHR,
-            .module = compileShader("../shaders/raytracing.glsl", EShLangRayGen, "#define RAYGEN_SHADER\n"),
+            .module = ShaderCompiler::compileShader(m_device, "../shaders/raytracing.glsl", EShLangRayGen, "#define RAYGEN_SHADER\n"),
             .pName = "main",
         },
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_MISS_BIT_KHR,
-            .module = compileShader("../shaders/raytracing.glsl", EShLangMiss, "#define MISS_SHADER\n"),
+            .module = ShaderCompiler::compileShader(m_device, "../shaders/raytracing.glsl", EShLangMiss, "#define MISS_SHADER\n"),
             .pName = "main",
         },
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR,
-            .module = compileShader("../shaders/raytracing.glsl", EShLangClosestHit, "#define CLOSEST_HIT_SHADER\n"),
+            .module = ShaderCompiler::compileShader(m_device, "../shaders/raytracing.glsl", EShLangClosestHit, "#define CLOSEST_HIT_SHADER\n"),
             .pName = "main",
         },
         VkPipelineShaderStageCreateInfo{
             .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
             .stage = VK_SHADER_STAGE_ANY_HIT_BIT_KHR,
-            .module = compileShader("../shaders/raytracing.glsl", EShLangAnyHit, "#define ANY_HIT_SHADER\n"),
+            .module = ShaderCompiler::compileShader(m_device, "../shaders/raytracing.glsl", EShLangAnyHit, "#define ANY_HIT_SHADER\n"),
             .pName = "main",
         },
     };
@@ -232,77 +216,6 @@ void App::createRaytracingPipeline() {
         vkDestroyShaderModule(m_device->getHandle(), shaderStage.module, nullptr);
 }
 
-VkShaderModule App::compileShader(const std::string& path, EShLanguage stage, const char *preamble) {
-    glslang::InitializeProcess();
-
-    // Parameters
-    constexpr int glslVersion = 460;
-    constexpr bool forwardCompatible = false;
-    constexpr EProfile profile = ECoreProfile;
-    constexpr EShMessages messageFlags = EShMsgDefault;
-    glslang::TShader::ForbidIncluder includer;
-
-
-    // Load shader source
-    std::ifstream file(path);
-    if (!file.is_open())
-        throw std::runtime_error("Failed to compile shader \"" + path + "\": file not found");
-
-    const std::string shaderSourceStr = std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
-    const std::array<const char *, 1> shaderSource = { shaderSourceStr.c_str() };
-
-
-    // Shader config
-    glslang::TShader shader(stage);
-    shader.setEnvClient(glslang::EShClientVulkan, glslang::EShTargetVulkan_1_4);
-    shader.setEnvTarget(glslang::EshTargetSpv, glslang::EShTargetSpv_1_6);
-    shader.setEnvInput(glslang::EShSourceGlsl, stage, glslang::EShClientVulkan, glslVersion);
-    shader.setEntryPoint("main");
-    shader.setPreamble(preamble);
-    shader.setStrings(shaderSource.data(), 1);
-
-
-    // Preprocess
-    std::string preprocessedShaderStr;
-    if (!shader.preprocess(GetDefaultResources(), glslVersion, profile, false, forwardCompatible, messageFlags, &preprocessedShaderStr, includer))
-        throw std::runtime_error("Failed to preprocess shader \"" + path + "\": " + shader.getInfoLog());
-    const std::array<const char *, 1> preprocessedShader = { preprocessedShaderStr.c_str() };
-
-
-    // Parse
-    shader.setStrings(preprocessedShader.data(), 1);
-    if (!shader.parse(GetDefaultResources(), glslVersion, profile, false, forwardCompatible, messageFlags, includer))
-        throw std::runtime_error("Failed to parse shader \"" + path + "\": " + shader.getInfoLog());
-
-
-    // Link
-    glslang::TProgram program;
-    program.addShader(&shader);
-    if (!program.link(messageFlags))
-        throw std::runtime_error("Failed to link shader \"" + path + "\": " + program.getInfoLog());
-
-
-    // Compile
-    std::vector<uint32_t> spirvCode;
-    glslang::SpvOptions options{ .validate = true };
-    glslang::GlslangToSpv(*program.getIntermediate(stage), spirvCode, &options);
-
-    glslang::FinalizeProcess();
-
-
-    // Shader module creation
-    const VkShaderModuleCreateInfo shaderModuleCreateInfo{
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .codeSize = spirvCode.size() * sizeof(uint32_t),
-        .pCode = spirvCode.data(),
-    };
-
-    VkShaderModule shaderModule{};
-    VK_CHECK(vkCreateShaderModule(m_device->getHandle(), &shaderModuleCreateInfo, nullptr, &shaderModule));
-
-    return shaderModule;
-}
-
 void App::handleEvents(float deltaTime) {
     m_window->pollEvents();
 
@@ -345,80 +258,27 @@ void App::traceRays(VkCommandBuffer commandBuffer) {
 }
 
 void App::transferOutputImageToSwapchain(VkCommandBuffer commandBuffer) {
-    // Transition ouput image to transfer src
-    const VkImageMemoryBarrier outputGeneralToTransferSrcBarrier{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
-        .dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_GENERAL,
-        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = m_outputImage->getHandle(),
-        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-    };
+    m_outputImage->cmdTransitionLayout(commandBuffer,
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_GENERAL,               .accessMask = VK_ACCESS_SHADER_WRITE_BIT,   .stageFlags = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR },
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,  .accessMask = VK_ACCESS_TRANSFER_READ_BIT,  .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT}
+    );
 
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &outputGeneralToTransferSrcBarrier);
+    m_swapchain.getCurrentImage()->cmdTransitionLayout(commandBuffer,
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_UNDEFINED,             .accessMask = 0,                            .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT },
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  .accessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT }
+    );
 
+    m_swapchain.getCurrentImage()->cmdCopyFromImage(commandBuffer, *m_outputImage);
 
-    // Transition swapchain image to transfer dst
-    const VkImageMemoryBarrier swapchainUndefinedToTransferDstBarrier{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = 0,
-        .dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = m_swapchain.getCurrentImage(),
-        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-    };
+    m_outputImage->cmdTransitionLayout(commandBuffer,
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,  .accessMask = VK_ACCESS_TRANSFER_READ_BIT,  .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT },
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_GENERAL,               .accessMask = 0,                            .stageFlags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT }
+    );
 
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &swapchainUndefinedToTransferDstBarrier);
-
-
-    // Copy output image to swapchain image
-    const VkImageCopy imageCopy{
-        .srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-        .srcOffset = { 0, 0, 0 },
-        .dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 },
-        .dstOffset = { 0, 0, 0 },
-        .extent = { m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1 },
-    };
-
-    vkCmdCopyImage(commandBuffer, m_outputImage->getHandle(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, m_swapchain.getCurrentImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &imageCopy);
-
-
-    // Transition output image to general
-    const VkImageMemoryBarrier outputTransferSrcToGeneralBarrier{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT,
-        .dstAccessMask = 0,
-        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_GENERAL,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = m_outputImage->getHandle(),
-        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-    };
-
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &outputTransferSrcToGeneralBarrier);
-
-
-    // Transition swapchain image to present
-    const VkImageMemoryBarrier swapchainTransferDstToPresentBarrier{
-        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-        .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-        .dstAccessMask = 0,
-        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .image = m_swapchain.getCurrentImage(),
-        .subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 },
-    };
-
-    vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &swapchainTransferDstToPresentBarrier);
+    m_swapchain.getCurrentImage()->cmdTransitionLayout(commandBuffer,
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,  .accessMask = VK_ACCESS_TRANSFER_WRITE_BIT, .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT },
+        Image::Layout{ .layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,       .accessMask = 0,                            .stageFlags = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT }
+    );
 }
 
 void App::bindDescriptors(VkCommandBuffer commandBuffer) {
