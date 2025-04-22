@@ -2,6 +2,7 @@
 
 #include "Vulkan/Device.hpp"
 #include "Vulkan/Utils.hpp"
+#include "shared.hpp"
 
 #define VK_NO_PROTOTYPES
 #include "volk.h"

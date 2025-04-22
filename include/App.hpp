@@ -7,12 +7,10 @@
 #include "Vulkan/Image.hpp"
 #include "Vulkan/Swapchain.hpp"
 #include "Window.hpp"
+#include "shared.hpp"
 
 #include "fastgltf/types.hpp"
 #include "glm/ext/matrix_float4x4.hpp"
-#include "glm/ext/vector_float2.hpp"
-#include "glm/ext/vector_float3.hpp"
-#include "glm/ext/vector_float4.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include <vulkan/vulkan_core.h>
 
@@ -38,12 +36,6 @@ class App {
 
 
     private: // Assets
-        struct Vertex {
-            glm::vec3 position;
-            glm::vec3 normal;
-            glm::vec2 uv;
-        };
-
         struct AccelerationStructure {
             VkAccelerationStructureKHR handle;
             VkDeviceAddress deviceAddress;
@@ -67,43 +59,19 @@ class App {
             std::vector<VkAccelerationStructureInstanceKHR> instances;
         };
 
-        struct GpuPrimitiveInstance {
-            VkDeviceAddress vertexBufferAddress;
-            VkDeviceAddress indexBufferAddress;
-            int materialIndex;
-        };
-
         struct Texture {
             std::shared_ptr<Image> image;
             VkSampler sampler;
             uint32_t bindlessId;
         };
 
-        struct GpuMaterial {
-            // Textures
-            int baseColorTextureIndex;
-            int normalTextureIndex;
-            int metallicRoughnessTextureIndex;
-            int emissiveTextureIndex;
-
-            // Factors
-            glm::vec4 baseColorFactor;
-            float metallicFactor;
-            float roughnessFactor;
-            glm::vec3 emissiveFactor;
-
-            // Params
-            int alphaMode;
-            float alphaCutoff;
-        };
-
         std::vector<std::shared_ptr<Mesh>> m_meshes;
         std::vector<MeshInstance> m_meshInstances;
-        std::vector<GpuPrimitiveInstance> m_gpuPrimitiveInstances;
-        std::unique_ptr<Buffer> m_gpuPrimitiveInstancesBuffer;
+        std::vector<PrimitiveInstance> m_primitiveInstances;
+        std::unique_ptr<Buffer> m_primitiveInstancesBuffer;
 
         std::map<uint32_t, std::shared_ptr<Image>> m_images;
-        std::unique_ptr<Buffer> m_gpuMaterials;
+        std::unique_ptr<Buffer> m_materialBuffer;
         std::vector<VkSampler> m_samplers;
         std::vector<Texture> m_textures;
 
@@ -122,13 +90,6 @@ class App {
 
 
     private: // Raytracing preparation
-        struct PushConstantData {
-            glm::mat4 inverseView;
-            glm::mat4 inverseProjection;
-            VkDeviceAddress gpuPrimitiveInstancesBufferAddress;
-            VkDeviceAddress gpuMaterialsBufferAddress;
-        };
-
         VkPhysicalDeviceRayTracingPipelinePropertiesKHR m_raytracingProperties{};
         VkPipelineLayout m_pipelineLayout{};
         VkPipeline m_raytracingPipeline{};

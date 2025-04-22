@@ -10,6 +10,7 @@
 #include "glm/ext/vector_int2.hpp"
 #include "glm/matrix.hpp"
 #include "glslang/Public/ShaderLang.h"
+#include "shared.hpp"
 #include <vulkan/vulkan_core.h>
 
 #include <array>
@@ -33,7 +34,7 @@ App::App() {
 
     m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.1, 100);
 
-    loadAssetsFromFile("../assets/Arcade/Arcade.gltf");
+    loadAssetsFromFile("../assets/sponza.glb");
     prepareOutputImage();
     getRaytracingProperties();
     createRaytracingPipeline();
@@ -131,7 +132,7 @@ void App::createRaytracingPipeline() {
     const VkPushConstantRange pushConstantRange{
         .stageFlags = VK_SHADER_STAGE_ALL,
         .offset = 0,
-        .size = sizeof(PushConstantData),
+        .size = sizeof(PushConstant),
     };
 
     const VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{
@@ -284,13 +285,13 @@ void App::transferOutputImageToSwapchain(VkCommandBuffer commandBuffer) {
 void App::bindDescriptors(VkCommandBuffer commandBuffer) {
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1, &m_descriptorManager.getDescriptorSet(), 0, nullptr);
 
-    const PushConstantData pushConstantData{
+    const PushConstant pc{
         .inverseView = glm::inverse(m_camera.getViewMatrix()),
         .inverseProjection = glm::inverse(m_camera.getProjectionMatrix()),
-        .gpuPrimitiveInstancesBufferAddress = m_gpuPrimitiveInstancesBuffer->getDeviceAddress(),
-        .gpuMaterialsBufferAddress = m_gpuMaterials->getDeviceAddress(),
+        .primitiveInstancesBuffer = m_primitiveInstancesBuffer->getDeviceAddress(),
+        .materialsBuffer = m_materialBuffer->getDeviceAddress(),
     };
-    vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstantData), &pushConstantData);
+    vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant), &pc);
 }
 
 void App::updateWindowTitle(float deltaTime) {

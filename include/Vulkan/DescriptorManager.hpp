@@ -11,12 +11,6 @@
 
 class DescriptorManager {
     public:
-        const uint32_t STORAGE_IMAGE_BINDING = 0;
-        const uint32_t COMBINED_IMAGE_SAMPLER_BINDING = 1;
-        const uint32_t ACCELERATION_STRUCTURE_BINDING = 2;
-
-
-    public:
         DescriptorManager(const std::shared_ptr<Device>& device);
         ~DescriptorManager();
 

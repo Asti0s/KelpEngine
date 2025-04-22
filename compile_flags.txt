@@ -1,6 +1,7 @@
 -std=c++20
 
 -I./include
+-I./shaders
 -I./src
 
 -I./external/fastgltf/include

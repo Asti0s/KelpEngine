@@ -49,6 +49,7 @@ target_link_libraries(KelpEngine PRIVATE
 # Include directories
 target_include_directories(KelpEngine PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/external/stb
     ${IMGUI_DIR}

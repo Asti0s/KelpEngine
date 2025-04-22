@@ -4,6 +4,7 @@
 #include "Vulkan/Device.hpp"
 #include "Vulkan/Image.hpp"
 #include "Vulkan/Utils.hpp"
+#include "shared.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
 #define GLM_ENABLE_EXPERIMENTAL
@@ -42,35 +43,35 @@
 #include <vector>
 
 void App::loadMaterials(const fastgltf::Asset& asset) {
-    std::vector<GpuMaterial> gpuMaterials;
-    gpuMaterials.reserve(asset.materials.size());
+    std::vector<Material> materials;
+    materials.reserve(asset.materials.size());
 
-    for (const auto& material : asset.materials) {
-        const GpuMaterial gpuMaterial{
-            .baseColorTextureIndex = material.pbrData.baseColorTexture.has_value() ? static_cast<int>(material.pbrData.baseColorTexture.value().textureIndex) : -1,
-            .normalTextureIndex = material.normalTexture.has_value() ? static_cast<int>(material.normalTexture.value().textureIndex) : -1,
-            .metallicRoughnessTextureIndex = material.pbrData.metallicRoughnessTexture.has_value() ? static_cast<int>(material.pbrData.metallicRoughnessTexture.value().textureIndex) : -1,
-            .emissiveTextureIndex = material.emissiveTexture.has_value() ? static_cast<int>(material.emissiveTexture.value().textureIndex) : -1,
-            .baseColorFactor = glm::vec4(material.pbrData.baseColorFactor.x(), material.pbrData.baseColorFactor.y(), material.pbrData.baseColorFactor.z(), material.pbrData.baseColorFactor.w()),
-            .metallicFactor = material.pbrData.metallicFactor,
-            .roughnessFactor = material.pbrData.roughnessFactor,
-            .emissiveFactor = glm::vec3(material.emissiveFactor.x(), material.emissiveFactor.y(), material.emissiveFactor.z()),
-            .alphaMode = static_cast<int>(material.alphaMode),
-            .alphaCutoff = material.alphaCutoff,
+    for (const auto& gltfMaterial : asset.materials) {
+        const Material material{
+            .baseColorTexture = gltfMaterial.pbrData.baseColorTexture.has_value() ? static_cast<int>(gltfMaterial.pbrData.baseColorTexture.value().textureIndex) : -1,
+            .normalTexture = gltfMaterial.normalTexture.has_value() ? static_cast<int>(gltfMaterial.normalTexture.value().textureIndex) : -1,
+            .metallicRoughnessTexture = gltfMaterial.pbrData.metallicRoughnessTexture.has_value() ? static_cast<int>(gltfMaterial.pbrData.metallicRoughnessTexture.value().textureIndex) : -1,
+            .emissiveTexture = gltfMaterial.emissiveTexture.has_value() ? static_cast<int>(gltfMaterial.emissiveTexture.value().textureIndex) : -1,
+            .baseColorFactor = glm::vec4(gltfMaterial.pbrData.baseColorFactor.x(), gltfMaterial.pbrData.baseColorFactor.y(), gltfMaterial.pbrData.baseColorFactor.z(), gltfMaterial.pbrData.baseColorFactor.w()),
+            .metallicFactor = gltfMaterial.pbrData.metallicFactor,
+            .roughnessFactor = gltfMaterial.pbrData.roughnessFactor,
+            .emissiveFactor = glm::vec3(gltfMaterial.emissiveFactor.x(), gltfMaterial.emissiveFactor.y(), gltfMaterial.emissiveFactor.z()),
+            .alphaMode = static_cast<int>(gltfMaterial.alphaMode),
+            .alphaCutoff = gltfMaterial.alphaCutoff,
         };
 
-        gpuMaterials.push_back(gpuMaterial);
+        materials.push_back(material);
     }
 
-    const Buffer gpuMaterialStagingBuffer = Buffer(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    const Buffer materialStagingBuffer = Buffer(m_device, materials.size() * sizeof(Material), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
     void *data = nullptr;
-    gpuMaterialStagingBuffer.map(&data);
-    memcpy(data, gpuMaterials.data(), gpuMaterials.size() * sizeof(GpuMaterial));
-    gpuMaterialStagingBuffer.unmap();
+    materialStagingBuffer.map(&data);
+    memcpy(data, materials.data(), materials.size() * sizeof(Material));
+    materialStagingBuffer.unmap();
 
-    m_gpuMaterials = std::make_unique<Buffer>(m_device, gpuMaterials.size() * sizeof(GpuMaterial), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    m_materialBuffer = std::make_unique<Buffer>(m_device, materials.size() * sizeof(Material), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::Graphics); {
-        m_gpuMaterials->copyFrom(commandBuffer, gpuMaterialStagingBuffer.getHandle(), gpuMaterials.size() * sizeof(GpuMaterial));
+        m_materialBuffer->copyFrom(commandBuffer, materialStagingBuffer.getHandle(), materials.size() * sizeof(Material));
     } m_device->endSingleTimeCommands(Device::Graphics, commandBuffer);
 }
 
@@ -566,7 +567,7 @@ void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::As
         for (const auto& primitive : mesh->primitives) {
             const VkAccelerationStructureInstanceKHR instance{
                 .transform = transformMatrix,
-                .instanceCustomIndex = static_cast<uint32_t>(m_gpuPrimitiveInstances.size()),
+                .instanceCustomIndex = static_cast<uint32_t>(m_primitiveInstances.size()),
                 .mask = 0xFF,
                 .instanceShaderBindingTableRecordOffset = 0,
                 .flags = VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR,
@@ -574,9 +575,9 @@ void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::As
             };
             newMeshInstance.instances.push_back(instance);
 
-            m_gpuPrimitiveInstances.push_back(GpuPrimitiveInstance {
-                .vertexBufferAddress = primitive.vertexBuffer.getDeviceAddress(),
-                .indexBufferAddress = primitive.indexBuffer.getDeviceAddress(),
+            m_primitiveInstances.push_back(PrimitiveInstance {
+                .vertexBuffer = primitive.vertexBuffer.getDeviceAddress(),
+                .indexBuffer = primitive.indexBuffer.getDeviceAddress(),
                 .materialIndex = primitive.materialIndex,
             });
         }
@@ -597,16 +598,16 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
     }
 
 
-    // Gpu primitive instances buffer creation
-    const Buffer gpuPrimitiveInstancesStagingBuffer = Buffer(m_device, m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
+    // Primitive instances buffer creation
+    const Buffer primitiveInstancesStagingBuffer = Buffer(m_device, m_primitiveInstances.size() * sizeof(PrimitiveInstance), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT);
     void *data = nullptr;
-    gpuPrimitiveInstancesStagingBuffer.map(&data);
-    memcpy(data, m_gpuPrimitiveInstances.data(), m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance));
-    gpuPrimitiveInstancesStagingBuffer.unmap();
+    primitiveInstancesStagingBuffer.map(&data);
+    memcpy(data, m_primitiveInstances.data(), m_primitiveInstances.size() * sizeof(PrimitiveInstance));
+    primitiveInstancesStagingBuffer.unmap();
 
-    m_gpuPrimitiveInstancesBuffer = std::make_unique<Buffer>(m_device, m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+    m_primitiveInstancesBuffer = std::make_unique<Buffer>(m_device, m_primitiveInstances.size() * sizeof(PrimitiveInstance), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
     VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
-        m_gpuPrimitiveInstancesBuffer->copyFrom(commandBuffer, gpuPrimitiveInstancesStagingBuffer.getHandle(), m_gpuPrimitiveInstances.size() * sizeof(GpuPrimitiveInstance));
+        m_primitiveInstancesBuffer->copyFrom(commandBuffer, primitiveInstancesStagingBuffer.getHandle(), m_primitiveInstances.size() * sizeof(PrimitiveInstance));
     } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
