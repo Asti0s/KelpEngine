@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Window.hpp"
+#include "Viewer/Window.hpp"
 
 #define VK_NO_PROTOTYPES
 #include "vk_mem_alloc.h"

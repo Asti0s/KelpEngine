@@ -1,12 +1,12 @@
 #pragma once
 
-#include "Camera.hpp"
+#include "Viewer/Camera.hpp"
+#include "Viewer/Window.hpp"
 #include "Vulkan/Buffer.hpp"
 #include "Vulkan/DescriptorManager.hpp"
 #include "Vulkan/Device.hpp"
 #include "Vulkan/Image.hpp"
 #include "Vulkan/Swapchain.hpp"
-#include "Window.hpp"
 #include "shared.hpp"
 
 #include "fastgltf/types.hpp"
@@ -21,18 +21,18 @@
 #include <mutex>
 #include <vector>
 
-class App {
+class Viewer {
     public:
-        App();
-        ~App();
+        Viewer();
+        ~Viewer();
 
-        App(const App&) = delete;
-        App& operator=(const App&) = delete;
+        Viewer(const Viewer&) = delete;
+        Viewer& operator=(const Viewer&) = delete;
 
-        App(App&&) noexcept = delete;
-        App& operator=(App&&) = delete;
+        Viewer(Viewer&&) noexcept = delete;
+        Viewer& operator=(Viewer&&) = delete;
 
-        void run();
+        void run(const std::filesystem::path& filePath);
 
 
     private: // Assets
@@ -86,7 +86,7 @@ class App {
         void loadTextures(fastgltf::Asset& asset);
         void loadMaterials(const fastgltf::Asset& asset);
 
-        void loadAssetsFromFile(const char *filePath);
+        void loadAssetsFromFile(const std::filesystem::path& filePath);
 
 
     private: // Raytracing preparation

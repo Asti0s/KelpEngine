@@ -1,6 +1,6 @@
-#include "ShaderCompiler.hpp"
-#include "Vulkan/Device.hpp"
-#include "Vulkan/Utils.hpp"
+#include "Viewer/ShaderCompiler.hpp"
+#include "Viewer/Vulkan/Device.hpp"
+#include "Viewer/Vulkan/Utils.hpp"
 
 #include <glslang/MachineIndependent/Versions.h>
 #include <glslang/Public/ResourceLimits.h>

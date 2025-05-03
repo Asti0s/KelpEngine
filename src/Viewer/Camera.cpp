@@ -5,10 +5,10 @@
 ** Camera
 */
 
-#include "Camera.hpp"
+#include "Viewer/Camera.hpp"
 
-#include "Config.hpp"
-#include "Window.hpp"
+#include "Viewer/Config.hpp"
+#include "Viewer/Window.hpp"
 
 #define GLM_FORCE_RADIANS
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE

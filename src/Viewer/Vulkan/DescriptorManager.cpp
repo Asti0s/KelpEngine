@@ -1,7 +1,7 @@
-#include "Vulkan/DescriptorManager.hpp"
+#include "Viewer/Vulkan/DescriptorManager.hpp"
 
-#include "Vulkan/Device.hpp"
-#include "Vulkan/Utils.hpp"
+#include "Viewer/Vulkan/Device.hpp"
+#include "Viewer/Vulkan/Utils.hpp"
 #include "shared.hpp"
 
 #define VK_NO_PROTOTYPES

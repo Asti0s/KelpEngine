@@ -1,10 +1,10 @@
-#include "App.hpp"
+#include "Viewer/Viewer.hpp"
 
-#include "ShaderCompiler.hpp"
-#include "Vulkan/Device.hpp"
-#include "Vulkan/Image.hpp"
-#include "Vulkan/Swapchain.hpp"
-#include "Vulkan/Utils.hpp"
+#include "Viewer/ShaderCompiler.hpp"
+#include "Viewer/Vulkan/Device.hpp"
+#include "Viewer/Vulkan/Image.hpp"
+#include "Viewer/Vulkan/Swapchain.hpp"
+#include "Viewer/Vulkan/Utils.hpp"
 
 #include "GLFW/glfw3.h"
 #include "glm/ext/vector_int2.hpp"
@@ -23,7 +23,7 @@
 #include <string>
 #include <vector>
 
-App::App() {
+Viewer::Viewer() {
     m_window->setResizeCallback([&](const glm::ivec2& size) {
         m_device->waitIdle();
         m_swapchain.resize(size);
@@ -34,14 +34,13 @@ App::App() {
 
     m_camera.setPerspective(90, static_cast<float>(m_window->getSize().x) / static_cast<float>(m_window->getSize().y), 0.1, 100);
 
-    loadAssetsFromFile("../assets/sponza.glb");
     prepareOutputImage();
     getRaytracingProperties();
     createRaytracingPipeline();
     createShaderBindingTable();
 }
 
-App::~App() {
+Viewer::~Viewer() {
     m_device->waitIdle();
 
     for (const auto& mesh : m_meshes)
@@ -69,7 +68,7 @@ App::~App() {
         vkDestroyPipelineLayout(m_device->getHandle(), m_pipelineLayout, VK_NULL_HANDLE);
 }
 
-void App::getRaytracingProperties() {
+void Viewer::getRaytracingProperties() {
     VkPhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR,
     };
@@ -81,7 +80,7 @@ void App::getRaytracingProperties() {
     m_raytracingProperties = rayTracingPipelineProperties;
 }
 
-void App::prepareOutputImage() {
+void Viewer::prepareOutputImage() {
     const Image::CreateInfo imageCreateInfo{
         .extent = {m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1},
         .usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
@@ -102,7 +101,7 @@ static size_t align(size_t value, size_t alignment) {   // NOLINT
     return (value + alignment - 1) & ~(alignment - 1);
 }
 
-void App::createShaderBindingTable() {
+void Viewer::createShaderBindingTable() {
     constexpr uint32_t groupCount = 3;
     const uint32_t handleSize = m_raytracingProperties.shaderGroupHandleSize;
     const uint32_t handleSizeAligned = align(handleSize, m_raytracingProperties.shaderGroupHandleAlignment);
@@ -127,7 +126,7 @@ void App::createShaderBindingTable() {
     std::memcpy(m_mappedHitShaderBindingTable, shaderHandleStorage.data() + static_cast<size_t>(handleSizeAligned * 2), handleSize);
 }
 
-void App::createRaytracingPipeline() {
+void Viewer::createRaytracingPipeline() {
     // Pipeline layout creation
     const VkPushConstantRange pushConstantRange{
         .stageFlags = VK_SHADER_STAGE_ALL,
@@ -217,7 +216,7 @@ void App::createRaytracingPipeline() {
         vkDestroyShaderModule(m_device->getHandle(), shaderStage.module, nullptr);
 }
 
-void App::handleEvents(float deltaTime) {
+void Viewer::handleEvents(float deltaTime) {
     m_window->pollEvents();
 
     if (m_window->isMouseButtonPressed(GLFW_MOUSE_BUTTON_RIGHT)) {
@@ -232,7 +231,7 @@ void App::handleEvents(float deltaTime) {
     m_camera.update(deltaTime);
 }
 
-void App::traceRays(VkCommandBuffer commandBuffer) {
+void Viewer::traceRays(VkCommandBuffer commandBuffer) {
     const uint32_t handleSizeAligned = align(m_raytracingProperties.shaderGroupHandleSize, m_raytracingProperties.shaderGroupHandleAlignment);
 
     const VkStridedDeviceAddressRegionKHR raygenShaderSbtEntry{
@@ -258,7 +257,7 @@ void App::traceRays(VkCommandBuffer commandBuffer) {
     vkCmdTraceRaysKHR(commandBuffer, &raygenShaderSbtEntry, &missShaderSbtEntry, &hitShaderSbtEntry, &callableShaderSbtEntry, m_swapchain.getExtent().width, m_swapchain.getExtent().height, 1);
 }
 
-void App::transferOutputImageToSwapchain(VkCommandBuffer commandBuffer) {
+void Viewer::transferOutputImageToSwapchain(VkCommandBuffer commandBuffer) {
     m_outputImage->cmdTransitionLayout(commandBuffer,
         Image::Layout{ .layout = VK_IMAGE_LAYOUT_GENERAL,               .accessMask = VK_ACCESS_SHADER_WRITE_BIT,   .stageFlags = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR },
         Image::Layout{ .layout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,  .accessMask = VK_ACCESS_TRANSFER_READ_BIT,  .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT}
@@ -282,7 +281,7 @@ void App::transferOutputImageToSwapchain(VkCommandBuffer commandBuffer) {
     );
 }
 
-void App::bindDescriptors(VkCommandBuffer commandBuffer) {
+void Viewer::bindDescriptors(VkCommandBuffer commandBuffer) {
     vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, m_pipelineLayout, 0, 1, &m_descriptorManager.getDescriptorSet(), 0, nullptr);
 
     const PushConstant pc{
@@ -294,7 +293,7 @@ void App::bindDescriptors(VkCommandBuffer commandBuffer) {
     vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant), &pc);
 }
 
-void App::updateWindowTitle(float deltaTime) {
+void Viewer::updateWindowTitle(float deltaTime) {
     VkPhysicalDeviceMemoryBudgetPropertiesEXT memoryBudget{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT,
     };
@@ -319,12 +318,14 @@ void App::updateWindowTitle(float deltaTime) {
     m_window->setTitle(std::string("Kelp Engine | " + std::to_string(vramUsage) + " MB / " + std::to_string(vramBudget) + " MB | " + std::to_string(static_cast<int>(1.0F / deltaTime)) + " FPS").c_str());
 }
 
-void App::run() {
+void Viewer::run(const std::filesystem::path& filePath) {
     std::chrono::high_resolution_clock::time_point loopStart = std::chrono::high_resolution_clock::now();
     std::chrono::high_resolution_clock::time_point loopEnd = std::chrono::high_resolution_clock::now();
     float deltaTime = 0;
     float accum = 0;
     uint32_t frameCount = 0;
+
+    loadAssetsFromFile(filePath);
 
     while (m_window->isOpen()) {
         loopStart = std::chrono::high_resolution_clock::now();

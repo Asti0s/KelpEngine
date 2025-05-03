@@ -1,9 +1,9 @@
 #pragma once
 
-#include "Config.hpp"
+#include "Viewer/Config.hpp"
 #include "Device.hpp"
+#include "Image.hpp"
 
-#include "Vulkan/Image.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include "volk.h"
 #include <vulkan/vulkan_core.h>

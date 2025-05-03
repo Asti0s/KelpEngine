@@ -1,7 +1,7 @@
-#include "Vulkan/Image.hpp"
+#include "Viewer/Vulkan/Image.hpp"
 
-#include "Vulkan/Device.hpp"
-#include "Vulkan/Utils.hpp"
+#include "Viewer/Vulkan/Device.hpp"
+#include "Viewer/Vulkan/Utils.hpp"
 
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"

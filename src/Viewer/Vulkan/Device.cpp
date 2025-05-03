@@ -1,9 +1,9 @@
-#include "Vulkan/Device.hpp"
+#include "Viewer/Vulkan/Device.hpp"
 
 #define VMA_IMPLEMENTATION
-#include "Config.hpp"
-#include "Vulkan/Utils.hpp"
-#include "Window.hpp"
+#include "Viewer/Config.hpp"
+#include "Viewer/Vulkan/Utils.hpp"
+#include "Viewer/Window.hpp"
 
 #include "GLFW/glfw3.h"
 #include "volk.h"

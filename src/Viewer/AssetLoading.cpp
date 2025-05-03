@@ -1,9 +1,9 @@
-#include "App.hpp"
+#include "Viewer/Viewer.hpp"
 
-#include "Vulkan/Buffer.hpp"
-#include "Vulkan/Device.hpp"
-#include "Vulkan/Image.hpp"
-#include "Vulkan/Utils.hpp"
+#include "Viewer/Vulkan/Buffer.hpp"
+#include "Viewer/Vulkan/Device.hpp"
+#include "Viewer/Vulkan/Image.hpp"
+#include "Viewer/Vulkan/Utils.hpp"
 #include "shared.hpp"
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -42,7 +42,7 @@
 #include <variant>
 #include <vector>
 
-void App::loadMaterials(const fastgltf::Asset& asset) {
+void Viewer::loadMaterials(const fastgltf::Asset& asset) {
     std::vector<Material> materials;
     materials.reserve(asset.materials.size());
 
@@ -75,7 +75,7 @@ void App::loadMaterials(const fastgltf::Asset& asset) {
     } m_device->endSingleTimeCommands(Device::Graphics, commandBuffer);
 }
 
-void App::loadSamplers(const fastgltf::Asset& asset) {
+void Viewer::loadSamplers(const fastgltf::Asset& asset) {
     m_samplers.reserve(asset.samplers.size());
 
     static constexpr auto gltfToVkFilter = [](std::optional<fastgltf::Filter> filter) -> VkFilter {
@@ -151,7 +151,7 @@ void App::loadSamplers(const fastgltf::Asset& asset) {
     }
 }
 
-void App::loadTextures(fastgltf::Asset& asset) {
+void Viewer::loadTextures(fastgltf::Asset& asset) {
     m_textures.reserve(asset.textures.size());
 
     for (const fastgltf::Texture& texture : asset.textures) {
@@ -166,7 +166,7 @@ void App::loadTextures(fastgltf::Asset& asset) {
     }
 }
 
-Image App::loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandMutex) {
+Image Viewer::loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandMutex) {
     // Image creation
     const Image::CreateInfo imageCreateInfo{
         .extent = VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1},
@@ -215,7 +215,7 @@ Image App::loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandM
     return std::move(image);
 }
 
-void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset) {
+void Viewer::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset) {
     std::vector<std::thread> loadingThreads(asset.images.size());
     std::chrono::high_resolution_clock::time_point start = std::chrono::high_resolution_clock::now();
     std::mutex commandMutex;
@@ -285,7 +285,7 @@ void App::loadImages(const std::filesystem::path& filePath, fastgltf::Asset& ass
     std::clog << "Loaded all images in " << elapsedTime << " seconds" << std::endl;
 }
 
-void App::loadMeshes(fastgltf::Asset& asset) {
+void Viewer::loadMeshes(fastgltf::Asset& asset) {
     for (const auto& mesh : asset.meshes) {
         std::shared_ptr<Mesh> newMesh = std::make_shared<Mesh>();
         newMesh->primitives.reserve(mesh.primitives.size());
@@ -297,7 +297,7 @@ void App::loadMeshes(fastgltf::Asset& asset) {
     }
 }
 
-App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive) {
+Viewer::Primitive Viewer::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive) {
     // Vertices loading
     if (primitive.findAttribute("POSITION") == nullptr)
         throw std::runtime_error("Failed to load primitive: missing POSITION attribute");
@@ -533,7 +533,7 @@ App::Primitive App::loadPrimitive(const fastgltf::Asset& asset, const fastgltf::
     return newPrimitive;
 }
 
-void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform) {
+void Viewer::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform) {
     const glm::mat4 localTransform = std::visit(fastgltf::visitor {
         [&](const fastgltf::math::fmat4x4& matrix) -> glm::mat4 {
             return parentTransform * glm::make_mat4x4(matrix.data());
@@ -591,7 +591,7 @@ void App::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::As
     }
 }
 
-void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene) {
+void Viewer::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene) {
     for (const size_t nodeIndice : scene.nodeIndices) {
         const fastgltf::Node& node = asset.nodes.at(nodeIndice);
         loadGltfNode(filePath, asset, node);
@@ -707,14 +707,13 @@ void App::loadGltfScene(const std::filesystem::path& filePath, const fastgltf::A
     m_descriptorManager.storeAccelerationStructure(m_topLevelAccelerationStructure);
 }
 
-void App::loadAssetsFromFile(const char *filePath) {
-    const std::filesystem::path path = filePath;
-    if (!std::filesystem::exists(path))
-        throw std::runtime_error("Error loading \"" + path.string() + "\": file not found");
+void Viewer::loadAssetsFromFile(const std::filesystem::path& filePath) {
+    if (!std::filesystem::exists(filePath))
+        throw std::runtime_error("Error loading \"" + filePath.string() + "\": file not found");
 
-    fastgltf::Expected<fastgltf::GltfDataBuffer> dataBuffer = fastgltf::GltfDataBuffer::FromPath(path);
+    fastgltf::Expected<fastgltf::GltfDataBuffer> dataBuffer = fastgltf::GltfDataBuffer::FromPath(filePath);
     if (dataBuffer.error() != fastgltf::Error::None)
-        throw std::runtime_error("Error loading \"" + path.string() + "\": " + std::string(fastgltf::getErrorName(dataBuffer.error())) + ": " + std::string(fastgltf::getErrorMessage(dataBuffer.error())));
+        throw std::runtime_error("Error loading \"" + filePath.string() + "\": " + std::string(fastgltf::getErrorName(dataBuffer.error())) + ": " + std::string(fastgltf::getErrorMessage(dataBuffer.error())));
 
     constexpr fastgltf::Options options =
         fastgltf::Options::DontRequireValidAssetMember |
@@ -724,24 +723,24 @@ void App::loadAssetsFromFile(const char *filePath) {
 
     fastgltf::Parser parser;
     fastgltf::Asset asset;
-    if (path.extension() == ".gltf") {
-        fastgltf::Expected<fastgltf::Asset> expectedAsset = parser.loadGltf(dataBuffer.get(), path.parent_path(), options);
+    if (filePath.extension() == ".gltf") {
+        fastgltf::Expected<fastgltf::Asset> expectedAsset = parser.loadGltf(dataBuffer.get(), filePath.parent_path(), options);
         if (expectedAsset.error() != fastgltf::Error::None)
-            throw std::runtime_error("Error loading \"" + path.string() + "\": " + std::string(fastgltf::getErrorName(expectedAsset.error())) + ": " + std::string(fastgltf::getErrorMessage(expectedAsset.error())));
+            throw std::runtime_error("Error loading \"" + filePath.string() + "\": " + std::string(fastgltf::getErrorName(expectedAsset.error())) + ": " + std::string(fastgltf::getErrorMessage(expectedAsset.error())));
 
         asset = std::move(expectedAsset.get());
-    } else if (path.extension() == ".glb") {
-        fastgltf::Expected<fastgltf::Asset> expectedAsset = parser.loadGltfBinary(dataBuffer.get(), path.parent_path(), options);
+    } else if (filePath.extension() == ".glb") {
+        fastgltf::Expected<fastgltf::Asset> expectedAsset = parser.loadGltfBinary(dataBuffer.get(), filePath.parent_path(), options);
         if (expectedAsset.error() != fastgltf::Error::None)
-            throw std::runtime_error("Error loading \"" + path.string() + "\": " + std::string(fastgltf::getErrorName(expectedAsset.error())) + ": " + std::string(fastgltf::getErrorMessage(expectedAsset.error())));
+            throw std::runtime_error("Error loading \"" + filePath.string() + "\": " + std::string(fastgltf::getErrorName(expectedAsset.error())) + ": " + std::string(fastgltf::getErrorMessage(expectedAsset.error())));
 
         asset = std::move(expectedAsset.get());
     } else {
-        throw std::runtime_error("Error loading \"" + path.string() + "\": unknown file extension");
+        throw std::runtime_error("Error loading \"" + filePath.string() + "\": unknown file extension");
     }
 
     loadSamplers(asset);
-    loadImages(path, asset);
+    loadImages(filePath, asset);
     loadTextures(asset);
     loadMaterials(asset);
     loadMeshes(asset);
