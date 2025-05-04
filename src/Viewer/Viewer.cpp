@@ -43,16 +43,10 @@ Viewer::Viewer() {
 Viewer::~Viewer() {
     m_device->waitIdle();
 
-    for (const auto& mesh : m_meshes)
-        for (const auto& primitive : mesh->primitives)
-            if (primitive.accelerationStructure.handle != VK_NULL_HANDLE)
-                vkDestroyAccelerationStructureKHR(m_device->getHandle(), primitive.accelerationStructure.handle, VK_NULL_HANDLE);
-    for (const auto& sampler : m_samplers)
-        if (sampler != VK_NULL_HANDLE)
-            vkDestroySampler(m_device->getHandle(), sampler, VK_NULL_HANDLE);
-
     if (m_topLevelAccelerationStructure != VK_NULL_HANDLE)
         vkDestroyAccelerationStructureKHR(m_device->getHandle(), m_topLevelAccelerationStructure, VK_NULL_HANDLE);
+    if (m_defaultSampler != VK_NULL_HANDLE)
+        vkDestroySampler(m_device->getHandle(), m_defaultSampler, nullptr);
 
     if (m_hitShaderBindingTable != nullptr)
         m_hitShaderBindingTable->unmap();
@@ -326,6 +320,7 @@ void Viewer::run(const std::filesystem::path& filePath) {
     uint32_t frameCount = 0;
 
     loadAssetsFromFile(filePath);
+    return;
 
     while (m_window->isOpen()) {
         loopStart = std::chrono::high_resolution_clock::now();

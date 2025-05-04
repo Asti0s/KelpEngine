@@ -23,6 +23,7 @@ struct Vertex {
 struct Material {
     // Textures
     int baseColorTexture;
+    int alphaTexture;
     int normalTexture;
     int metallicRoughnessTexture;
     int emissiveTexture;

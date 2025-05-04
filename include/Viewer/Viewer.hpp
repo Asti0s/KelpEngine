@@ -9,16 +9,12 @@
 #include "Vulkan/Swapchain.hpp"
 #include "shared.hpp"
 
-#include "fastgltf/types.hpp"
-#include "glm/ext/matrix_float4x4.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include <vulkan/vulkan_core.h>
 
 #include <cstdint>
 #include <filesystem>
-#include <map>
 #include <memory>
-#include <mutex>
 #include <vector>
 
 class Viewer {
@@ -42,7 +38,7 @@ class Viewer {
             Buffer buffer;
         };
 
-        struct Primitive {
+        struct Mesh {
             Buffer vertexBuffer;
             Buffer indexBuffer;
             uint32_t indexCount;
@@ -50,43 +46,27 @@ class Viewer {
             int materialIndex;
         };
 
-        struct Mesh {
-            std::vector<Primitive> primitives;
-        };
-
-        struct MeshInstance {
-            std::shared_ptr<Mesh> mesh;
-            std::vector<VkAccelerationStructureInstanceKHR> instances;
-        };
-
         struct Texture {
             std::shared_ptr<Image> image;
-            VkSampler sampler;
             uint32_t bindlessId;
         };
 
+        std::vector<Texture> m_albedoTextures;
+        std::vector<Texture> m_alphaTextures;
+        std::vector<Texture> m_normalTextures;
+        std::vector<Texture> m_metallicRoughnessTextures;
+        std::vector<Texture> m_emissiveTextures;
+
         std::vector<std::shared_ptr<Mesh>> m_meshes;
-        std::vector<MeshInstance> m_meshInstances;
-        std::vector<PrimitiveInstance> m_primitiveInstances;
+        std::vector<VkAccelerationStructureInstanceKHR> m_meshInstances;
+        std::vector<Material> m_materials;
+
         std::unique_ptr<Buffer> m_primitiveInstancesBuffer;
-
-        std::map<uint32_t, std::shared_ptr<Image>> m_images;
         std::unique_ptr<Buffer> m_materialBuffer;
-        std::vector<VkSampler> m_samplers;
-        std::vector<Texture> m_textures;
-
-        void loadMeshes(fastgltf::Asset& asset);
-        Primitive loadPrimitive(const fastgltf::Asset& asset, const fastgltf::Primitive& primitive);
-        void loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform = glm::mat4(1));
-        void loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene);
-
-        Image loadImage(uint8_t *data, const glm::ivec2& size, std::mutex& commandMutex);
-        void loadImages(const std::filesystem::path& filePath, fastgltf::Asset& asset);
-        void loadSamplers(const fastgltf::Asset& asset);
-        void loadTextures(fastgltf::Asset& asset);
-        void loadMaterials(const fastgltf::Asset& asset);
+        VkSampler m_defaultSampler{};
 
         void loadAssetsFromFile(const std::filesystem::path& filePath);
+        void loadAndUploadTextureCollection(const std::filesystem::path& filePath, std::ifstream& file, std::vector<Texture>& targetCollection, VkFormat textureFormat, int channelCount);
 
 
     private: // Raytracing preparation

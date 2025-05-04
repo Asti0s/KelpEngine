@@ -47,7 +47,7 @@ namespace {
 
         try {
             Converter converter;
-            converter.run();
+            converter.convert(args[2], args[3]);
             return EXIT_SUCCESS;
         } catch (const std::exception& e) {
             std::cerr << "Converter error: " << e.what() << std::endl;
