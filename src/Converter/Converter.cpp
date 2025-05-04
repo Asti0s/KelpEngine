@@ -301,7 +301,7 @@ void Converter::loadGltfNode(const std::filesystem::path& filePath, const fastgl
     if (node.meshIndex.has_value()) {
         for (int i = 0; i < m_meshes.size(); i++) {
             if (node.meshIndex.value() == m_meshes[i].gltfIndex) {
-                m_meshInstances.push_back(MeshInstance{
+                m_meshInstances.push_back(KelpMeshInstance{
                     .transform = localTransform,
                     .meshIndex = i
                 });
@@ -392,6 +392,6 @@ void Converter::convert(const std::filesystem::path& inputFile, const std::files
 
     size_t meshInstanceCount = m_meshInstances.size();
     outFile.write(reinterpret_cast<const char*>(&meshInstanceCount), sizeof(size_t));
-    outFile.write(reinterpret_cast<const char*>(m_meshInstances.data()), static_cast<std::streamsize>(sizeof(MeshInstance) * meshInstanceCount));
+    outFile.write(reinterpret_cast<const char*>(m_meshInstances.data()), static_cast<std::streamsize>(sizeof(KelpMeshInstance) * meshInstanceCount));
     outFile.close();
 }

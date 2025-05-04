@@ -77,12 +77,12 @@ vec3 computeBarycentrics(Vertex vertices[3], vec3 rayOrigin, vec3 rayDir) {
     layout(location = 0) rayPayloadInEXT Payload payload;
 
     void main() {
-        PrimitiveInstance primitive = pc.data.primitiveInstancesBuffer.primitiveInstances[gl_InstanceCustomIndexEXT];
+        MeshInstance mesh = pc.data.meshInstanceBuffer.meshInstances[gl_InstanceCustomIndexEXT];
         const uint index = gl_PrimitiveID * 3;
 
-        Vertex v0 = primitive.vertexBuffer.vertices[primitive.indexBuffer.indices[index]];
-        Vertex v1 = primitive.vertexBuffer.vertices[primitive.indexBuffer.indices[index + 1]];
-        Vertex v2 = primitive.vertexBuffer.vertices[primitive.indexBuffer.indices[index + 2]];
+        Vertex v0 = mesh.vertexBuffer.vertices[mesh.indexBuffer.indices[index]];
+        Vertex v1 = mesh.vertexBuffer.vertices[mesh.indexBuffer.indices[index + 1]];
+        Vertex v2 = mesh.vertexBuffer.vertices[mesh.indexBuffer.indices[index + 2]];
 
         v0.position = gl_ObjectToWorldEXT * vec4(v0.position, 1.0);
         v1.position = gl_ObjectToWorldEXT * vec4(v1.position, 1.0);
@@ -101,11 +101,11 @@ vec3 computeBarycentrics(Vertex vertices[3], vec3 rayOrigin, vec3 rayDir) {
         const vec2 texGradX = texCoordsY - texCoords;
         const vec2 texGradY = texCoordsX - texCoords;
 
-        const Material material = pc.data.materialBuffer.materials[primitive.materialIndex];
-        if (material.baseColorTexture == -1)
+        const Material material = pc.data.materialBuffer.materials[mesh.materialIndex];
+        if (material.alphaTexture == -1)
             return;
 
-        const float alpha = textureGrad(textures[material.baseColorTexture], texCoords, texGradX, texGradY).a;
+        const float alpha = textureGrad(textures[material.alphaTexture], texCoords, texGradX, texGradY).r;
         if (alpha < material.alphaCutoff)
             ignoreIntersectionEXT;
     }
@@ -116,12 +116,12 @@ vec3 computeBarycentrics(Vertex vertices[3], vec3 rayOrigin, vec3 rayDir) {
     layout(location = 0) rayPayloadInEXT Payload payload;
 
     void main() {
-        PrimitiveInstance primitive = pc.data.primitiveInstancesBuffer.primitiveInstances[gl_InstanceCustomIndexEXT];
+        MeshInstance mesh = pc.data.meshInstanceBuffer.meshInstances[gl_InstanceCustomIndexEXT];
         const uint index = gl_PrimitiveID * 3;
 
-        Vertex v0 = primitive.vertexBuffer.vertices[primitive.indexBuffer.indices[index]];
-        Vertex v1 = primitive.vertexBuffer.vertices[primitive.indexBuffer.indices[index + 1]];
-        Vertex v2 = primitive.vertexBuffer.vertices[primitive.indexBuffer.indices[index + 2]];
+        Vertex v0 = mesh.vertexBuffer.vertices[mesh.indexBuffer.indices[index]];
+        Vertex v1 = mesh.vertexBuffer.vertices[mesh.indexBuffer.indices[index + 1]];
+        Vertex v2 = mesh.vertexBuffer.vertices[mesh.indexBuffer.indices[index + 2]];
 
         v0.position = gl_ObjectToWorldEXT * vec4(v0.position, 1.0);
         v1.position = gl_ObjectToWorldEXT * vec4(v1.position, 1.0);
@@ -140,9 +140,9 @@ vec3 computeBarycentrics(Vertex vertices[3], vec3 rayOrigin, vec3 rayDir) {
         const vec2 texGradX = texCoordsY - texCoords;
         const vec2 texGradY = texCoordsX - texCoords;
 
-        const int textureIndex = pc.data.materialBuffer.materials[primitive.materialIndex].baseColorTexture;
+        const int textureIndex = pc.data.materialBuffer.materials[mesh.materialIndex].baseColorTexture;
         if (textureIndex == -1) {
-            payload.hitValue = pc.data.materialBuffer.materials[primitive.materialIndex].baseColorFactor.rgb;
+            payload.hitValue = pc.data.materialBuffer.materials[mesh.materialIndex].baseColorFactor.rgb;
             return;
         }
 

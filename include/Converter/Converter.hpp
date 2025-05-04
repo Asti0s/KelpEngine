@@ -22,7 +22,7 @@ struct Mesh {
     int gltfIndex;
 };
 
-struct MeshInstance {
+struct KelpMeshInstance {
     glm::mat4 transform;
     int meshIndex;
 };
@@ -54,7 +54,7 @@ class Converter {
         void concatenateTextures();
 
         std::vector<Mesh> m_meshes;
-        std::vector<MeshInstance> m_meshInstances;
+        std::vector<KelpMeshInstance> m_meshInstances;
 
         std::vector<Material> m_materials;
 

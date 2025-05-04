@@ -43,6 +43,9 @@ Viewer::Viewer() {
 Viewer::~Viewer() {
     m_device->waitIdle();
 
+    for (const auto& mesh : m_meshes)
+        if (mesh->accelerationStructure.handle != VK_NULL_HANDLE)
+            vkDestroyAccelerationStructureKHR(m_device->getHandle(), mesh->accelerationStructure.handle, nullptr);
     if (m_topLevelAccelerationStructure != VK_NULL_HANDLE)
         vkDestroyAccelerationStructureKHR(m_device->getHandle(), m_topLevelAccelerationStructure, VK_NULL_HANDLE);
     if (m_defaultSampler != VK_NULL_HANDLE)
@@ -281,7 +284,7 @@ void Viewer::bindDescriptors(VkCommandBuffer commandBuffer) {
     const PushConstant pc{
         .inverseView = glm::inverse(m_camera.getViewMatrix()),
         .inverseProjection = glm::inverse(m_camera.getProjectionMatrix()),
-        .primitiveInstancesBuffer = m_primitiveInstancesBuffer->getDeviceAddress(),
+        .meshInstanceBuffer = m_meshInstanceBuffer->getDeviceAddress(),
         .materialsBuffer = m_materialBuffer->getDeviceAddress(),
     };
     vkCmdPushConstants(commandBuffer, m_pipelineLayout, VK_SHADER_STAGE_ALL, 0, sizeof(PushConstant), &pc);
@@ -320,7 +323,6 @@ void Viewer::run(const std::filesystem::path& filePath) {
     uint32_t frameCount = 0;
 
     loadAssetsFromFile(filePath);
-    return;
 
     while (m_window->isOpen()) {
         loopStart = std::chrono::high_resolution_clock::now();

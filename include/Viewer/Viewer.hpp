@@ -58,15 +58,18 @@ class Viewer {
         std::vector<Texture> m_emissiveTextures;
 
         std::vector<std::shared_ptr<Mesh>> m_meshes;
-        std::vector<VkAccelerationStructureInstanceKHR> m_meshInstances;
+        std::vector<VkAccelerationStructureInstanceKHR> m_accelerationStructureInstances;
         std::vector<Material> m_materials;
 
-        std::unique_ptr<Buffer> m_primitiveInstancesBuffer;
         std::unique_ptr<Buffer> m_materialBuffer;
+        std::unique_ptr<Buffer> m_meshInstanceBuffer;
         VkSampler m_defaultSampler{};
 
         void loadAssetsFromFile(const std::filesystem::path& filePath);
         void loadAndUploadTextureCollection(const std::filesystem::path& filePath, std::ifstream& file, std::vector<Texture>& targetCollection, VkFormat textureFormat, int channelCount);
+        void loadMaterials(std::ifstream& file);
+        void loadMeshes(std::ifstream& file);
+        void loadMeshInstances(std::ifstream& file);
 
 
     private: // Raytracing preparation

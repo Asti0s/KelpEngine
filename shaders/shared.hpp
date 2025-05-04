@@ -44,7 +44,7 @@ struct Material {
     layout(buffer_reference, scalar) buffer IndexBuffer { uint indices[]; };
 #endif
 
-struct PrimitiveInstance {
+struct MeshInstance {
     #ifdef __cplusplus
         VkDeviceAddress vertexBuffer;
         VkDeviceAddress indexBuffer;
@@ -57,17 +57,17 @@ struct PrimitiveInstance {
 
 #ifndef __cplusplus
     layout(buffer_reference, scalar) buffer Materials { Material materials[]; };
-    layout(buffer_reference, scalar) buffer PrimitiveInstances { PrimitiveInstance primitiveInstances[]; };
+    layout(buffer_reference, scalar) buffer MeshInstances { MeshInstance meshInstances[]; };
 #endif
 
 struct PushConstant {
     mat4 inverseView;
     mat4 inverseProjection;
     #ifdef __cplusplus
-        VkDeviceAddress primitiveInstancesBuffer;
+        VkDeviceAddress meshInstanceBuffer;
         VkDeviceAddress materialsBuffer;
     #else
-        PrimitiveInstances primitiveInstancesBuffer;
+        MeshInstances meshInstanceBuffer;
         Materials materialBuffer;
     #endif
 };
