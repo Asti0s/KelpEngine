@@ -1,6 +1,6 @@
 #include "Converter/Converter.hpp"
+#include "shared.hpp"
 
-#define STB_IMAGE_IMPLEMENTATION
 #include "fastgltf/core.hpp"
 #include "fastgltf/tools.hpp"
 #include "fastgltf/types.hpp"
@@ -8,13 +8,24 @@
 #include "glm/ext/vector_int2.hpp"
 #include "glm/gtc/quaternion.hpp"
 #include "glm/gtc/type_ptr.hpp"
+#include "omm.hpp"
 #include "stb_image.h"
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <iostream>
+#include <thread>
+
+void funcTime(const std::string& context, const std::function<void()>& func) {
+    const auto timeNow = std::chrono::high_resolution_clock::now();
+    func();
+    const auto timeEnd = std::chrono::high_resolution_clock::now();
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(timeEnd - timeNow).count();
+    std::cout << context << " in " << duration << " ms" << std::endl;
+}
 
 fastgltf::Asset Converter::parseFile(const std::filesystem::path& inputFile) {
     if (!std::filesystem::exists(inputFile))
@@ -152,90 +163,115 @@ std::pair<glm::ivec2, uint8_t*> Converter::loadTexture(fastgltf::Asset& asset, c
 }
 
 void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path& inputFile) {
+    std::vector<std::thread> threads;
+    threads.reserve(m_albedoTextures.size() + m_alphaTextures.size() + m_normalTextures.size() + m_metallicRoughnessTextures.size() + m_emissiveTextures.size());
+
     // Process albedo textures (RGBA format)
     for (Texture& albedoTexture : m_albedoTextures) {
-        const fastgltf::Texture& gltfTexture = asset.textures[albedoTexture.gltfIndex];
-        auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
+        threads.emplace_back([&]() {
+            const fastgltf::Texture& gltfTexture = asset.textures[albedoTexture.gltfIndex];
+            const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
 
-        albedoTexture.size = size;
-        albedoTexture.data.resize(static_cast<size_t>(size.x * size.y) * 4);
-        std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 4), albedoTexture.data.begin());
-        stbi_image_free(data);
+            albedoTexture.size = size;
+            albedoTexture.data.resize(static_cast<size_t>(size.x * size.y) * 4);
+            std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 4), albedoTexture.data.begin());
+            stbi_image_free(data);
+        });
+    }
+
+    // Wait for albedo texture threads to finish before processing alpha textures since they depend on them
+    for (auto& thread : threads) {
+        if (thread.joinable())
+            thread.join();
     }
 
     // Process alpha textures (extract alpha channel from albedo)
     for (Texture& alphaTexture : m_alphaTextures) {
-        const auto it = std::find_if(m_albedoTextures.begin(), m_albedoTextures.end(),
-            [&alphaTexture](const Texture& texture) {
-                return texture.gltfIndex == alphaTexture.gltfIndex;
-            });
+        threads.emplace_back([&]() {
+            const auto it = std::find_if(m_albedoTextures.begin(), m_albedoTextures.end(),
+                [&alphaTexture](const Texture& texture) {
+                    return texture.gltfIndex == alphaTexture.gltfIndex;
+                });
 
-        if (it == m_albedoTextures.end())
-            throw std::runtime_error("Failed to find alpha texture for glTF index " + std::to_string(alphaTexture.gltfIndex));
+            if (it == m_albedoTextures.end())
+                throw std::runtime_error("Failed to find alpha texture for glTF index " + std::to_string(alphaTexture.gltfIndex));
 
-        const Texture& albedoTexture = *it;
-        alphaTexture.size = albedoTexture.size;
-        alphaTexture.data.resize(static_cast<size_t>(albedoTexture.size.x) * albedoTexture.size.y);
+            const Texture& albedoTexture = *it;
+            alphaTexture.size = albedoTexture.size;
+            alphaTexture.data.resize(static_cast<size_t>(albedoTexture.size.x) * albedoTexture.size.y);
 
-        // Extract alpha channel
-        for (int y = 0; y < alphaTexture.size.y; ++y) {
-            for (int x = 0; x < alphaTexture.size.x; ++x) {
-                const size_t index = y * alphaTexture.size.x + x;
-                alphaTexture.data[index] = albedoTexture.data[index * 4 + 3];
+            // Extract alpha channel
+            for (int y = 0; y < alphaTexture.size.y; ++y) {
+                for (int x = 0; x < alphaTexture.size.x; ++x) {
+                    const size_t index = y * alphaTexture.size.x + x;
+                    alphaTexture.data[index] = albedoTexture.data[index * 4 + 3];
+                }
             }
-        }
+        });
     }
 
     // Process normal textures
     for (Texture& normalTexture : m_normalTextures) {
-        const fastgltf::Texture& gltfTexture = asset.textures[normalTexture.gltfIndex];
-        auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
+        threads.emplace_back([&]() {
+            const fastgltf::Texture& gltfTexture = asset.textures[normalTexture.gltfIndex];
+            const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
 
-        normalTexture.size = size;
-        normalTexture.data.resize(static_cast<size_t>(size.x * size.y) * 4);
-        std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 4), normalTexture.data.begin());
-        stbi_image_free(data);
+            normalTexture.size = size;
+            normalTexture.data.resize(static_cast<size_t>(size.x * size.y) * 4);
+            std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 4), normalTexture.data.begin());
+            stbi_image_free(data);
+        });
     }
 
     // Process metallic-roughness textures (encode to 2-channel format)
     for (Texture& metallicRoughnessTexture : m_metallicRoughnessTextures) {
-        const fastgltf::Texture& gltfTexture = asset.textures[metallicRoughnessTexture.gltfIndex];
-        auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb);
+        threads.emplace_back([&]() {
+            const fastgltf::Texture& gltfTexture = asset.textures[metallicRoughnessTexture.gltfIndex];
+            const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb);
 
-        // Encode to 2-channel format
-        metallicRoughnessTexture.size = size;
-        metallicRoughnessTexture.data.resize(static_cast<size_t>(size.x * size.y) * 2);
-        for (int y = 0; y < size.y; ++y) {
-            for (int x = 0; x < size.x; ++x) {
-                const size_t index = y * size.x + x;
-                const size_t srcIndex = index * 3;
-                const size_t encodedIndex = index * 2;
+            // Encode to 2-channel format
+            metallicRoughnessTexture.size = size;
+            metallicRoughnessTexture.data.resize(static_cast<size_t>(size.x * size.y) * 2);
+            for (int y = 0; y < size.y; ++y) {
+                for (int x = 0; x < size.x; ++x) {
+                    const size_t index = y * size.x + x;
+                    const size_t srcIndex = index * 3;
+                    const size_t encodedIndex = index * 2;
 
-                metallicRoughnessTexture.data[encodedIndex] = static_cast<uint8_t>(data[srcIndex]);
-                metallicRoughnessTexture.data[encodedIndex + 1] = static_cast<uint8_t>(data[srcIndex + 1]);
+                    metallicRoughnessTexture.data[encodedIndex] = static_cast<uint8_t>(data[srcIndex]);
+                    metallicRoughnessTexture.data[encodedIndex + 1] = static_cast<uint8_t>(data[srcIndex + 1]);
+                }
             }
-        }
 
-        stbi_image_free(data);
+            stbi_image_free(data);
+        });
     }
 
     // Process emissive textures
     for (Texture& emissiveTexture : m_emissiveTextures) {
-        const fastgltf::Texture& gltfTexture = asset.textures[emissiveTexture.gltfIndex];
-        auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
+        threads.emplace_back([&]() {
+            const fastgltf::Texture& gltfTexture = asset.textures[emissiveTexture.gltfIndex];
+            const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb);
 
-        emissiveTexture.size = size;
-        emissiveTexture.data.resize(static_cast<size_t>(size.x * size.y) * 4);
-        std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 4), emissiveTexture.data.begin());
-        stbi_image_free(data);
+            emissiveTexture.size = size;
+            emissiveTexture.data.resize(static_cast<size_t>(size.x * size.y) * 3);
+            std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 3), emissiveTexture.data.begin());
+            stbi_image_free(data);
+        });
+    }
+
+    // Wait for all threads to finish
+    for (auto& thread : threads) {
+        if (thread.joinable())
+            thread.join();
     }
 }
 
 void Converter::loadMeshes(fastgltf::Asset& asset) {
     for (uint32_t i = 0; i < asset.meshes.size(); i++) {
-        const fastgltf::Mesh& mesh = asset.meshes[i];
+        const fastgltf::Mesh& gltfMesh = asset.meshes[i];
 
-        for (const auto& primitive : mesh.primitives) {
+        for (const auto& primitive : gltfMesh.primitives) {
             if (!primitive.materialIndex.has_value())
                 throw std::runtime_error("Failed to load primitive: missing material index");
 
@@ -282,6 +318,84 @@ void Converter::loadMeshes(fastgltf::Asset& asset) {
     }
 }
 
+void Converter::bakeOpacityMicromaps() {
+    // Baker creation
+    const omm::BakerCreationDesc desc {
+        .type = omm::BakerType::CPU,
+    };
+
+    omm::Baker bakerHandle = nullptr;
+    omm::Result res = omm::CreateBaker(desc, &bakerHandle);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to create OMM baker: " + std::to_string(static_cast<int>(res)));
+
+
+    for (const auto& mesh: m_meshes) {
+        const Material& material = m_materials.at(mesh.materialIndex);
+
+        // std::cout << static_cast<int>(material.alphaMode) << " " << material.alphaTexture << std::endl;
+        if (material.alphaMode != static_cast<int>(fastgltf::AlphaMode::Opaque) && material.alphaTexture != -1) {
+            const Texture& alphaTexture = m_alphaTextures[material.alphaTexture];
+
+            // Separation of texCoords from vertices
+            std::vector<glm::vec2> texCoordBuffer(mesh.vertices.size());
+            for (size_t i = 0; i < mesh.vertices.size(); i++)
+                texCoordBuffer[i] = mesh.vertices[i].uv;
+
+
+            // OMM texture creation
+            const omm::Cpu::TextureMipDesc mipDesc {
+                .width = static_cast<uint32_t>(alphaTexture.size.x),
+                .height = static_cast<uint32_t>(alphaTexture.size.y),
+                .textureData = alphaTexture.data.data(),
+            };
+
+            const omm::Cpu::TextureDesc texDesc {
+                .format = omm::Cpu::TextureFormat::UNORM8,
+                .mips = &mipDesc,
+                .mipCount = 1,
+                .alphaCutoff = material.alphaCutoff,
+            };
+
+            omm::Cpu::Texture textureHandle = nullptr;
+            res = omm::Cpu::CreateTexture(bakerHandle, texDesc, &textureHandle);
+            if (res != omm::Result::SUCCESS)
+                throw std::runtime_error("Failed to create OMM texture: " + std::to_string(static_cast<int>(res)));
+
+
+            // OMM baking
+            const omm::Cpu::BakeInputDesc bakeDesc {
+                .bakeFlags = omm::Cpu::BakeFlags::EnableInternalThreads,
+                .texture = textureHandle,
+                .runtimeSamplerDesc = { .addressingMode = omm::TextureAddressMode::Mirror, .filter = omm::TextureFilterMode::Linear },
+                .alphaMode = material.alphaMode == static_cast<int>(fastgltf::AlphaMode::Mask) ? omm::AlphaMode::Test : omm::AlphaMode::Blend,
+                .texCoordFormat = omm::TexCoordFormat::UV32_FLOAT,
+                .texCoords = texCoordBuffer.data(),
+                .texCoordStrideInBytes = sizeof(glm::vec2),
+                .indexFormat = omm::IndexFormat::UINT_32,
+                .indexBuffer = mesh.indices.data(),
+                .indexCount = static_cast<uint32_t>(mesh.indices.size()),
+                .alphaCutoff = material.alphaCutoff,
+                .format = omm::Format::OC1_4_State,
+                .unknownStatePromotion = omm::UnknownStatePromotion::ForceOpaque,
+            };
+
+            omm::Cpu::BakeResult bakeResultHandle = nullptr;
+            res = omm::Cpu::Bake(bakerHandle, bakeDesc, &bakeResultHandle);
+            if (res != omm::Result::SUCCESS)
+                throw std::runtime_error("Failed to bake OMM: " + std::to_string(static_cast<int>(res)));
+
+            const omm::Cpu::BakeResultDesc* bakeResultDesc = nullptr;
+            res = omm::Cpu::GetBakeResultDesc(bakeResultHandle, &bakeResultDesc);
+            if (res != omm::Result::SUCCESS)
+                throw std::runtime_error("Failed to get OMM bake result: " + std::to_string(static_cast<int>(res)));
+
+            static int counter = 0;
+            std::cout << counter++ << std::endl;
+        }
+    }
+}
+
 void Converter::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform) {
     const glm::mat4 localTransform = std::visit(fastgltf::visitor {
         [&](const fastgltf::math::fmat4x4& matrix) -> glm::mat4 {
@@ -323,12 +437,32 @@ void Converter::loadGltfScene(const std::filesystem::path& filePath, const fastg
 }
 
 void Converter::convert(const std::filesystem::path& inputFile, const std::filesystem::path& outputFile) {
-    fastgltf::Asset asset = parseFile(inputFile);
-    loadMaterials(asset);
-    initTextureCollections();
-    loadTextures(asset, inputFile);
-    loadMeshes(asset);
-    loadGltfScene(inputFile, asset, asset.scenes[0]);
+    fastgltf::Asset asset;
+
+    funcTime("Parsed file", [&]() {
+        asset = parseFile(inputFile);
+    });
+
+    funcTime("Loaded materials", [&]() {
+        loadMaterials(asset);
+    });
+
+    funcTime("Loaded textures", [&]() {
+        initTextureCollections();
+        loadTextures(asset, inputFile);
+    });
+
+    funcTime("Loaded meshes", [&]() {
+        loadMeshes(asset);
+    });
+
+    funcTime("Baked opacity micromaps", [&]() {
+        bakeOpacityMicromaps();
+    });
+
+    funcTime("Loaded glTF scene", [&]() {
+        loadGltfScene(inputFile, asset, asset.scenes[0]);
+    });
 
 
     // Write to output file
@@ -336,62 +470,64 @@ void Converter::convert(const std::filesystem::path& inputFile, const std::files
     if (!outFile.is_open())
         throw std::runtime_error("Failed to open output file: " + outputFile.string());
 
-    size_t albedoCount = m_albedoTextures.size();
+    const size_t albedoCount = m_albedoTextures.size();
     outFile.write(reinterpret_cast<const char*>(&albedoCount), sizeof(size_t));
     for (const Texture& albedoTexture : m_albedoTextures) {
         outFile.write(reinterpret_cast<const char*>(&albedoTexture.size), sizeof(glm::ivec2));
         outFile.write(reinterpret_cast<const char*>(albedoTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * albedoTexture.data.size()));
     }
 
-    size_t alphaCount = m_alphaTextures.size();
+    const size_t alphaCount = m_alphaTextures.size();
     outFile.write(reinterpret_cast<const char*>(&alphaCount), sizeof(size_t));
     for (const Texture& alphaTexture : m_alphaTextures) {
         outFile.write(reinterpret_cast<const char*>(&alphaTexture.size), sizeof(glm::ivec2));
         outFile.write(reinterpret_cast<const char*>(alphaTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * alphaTexture.data.size()));
     }
 
-    size_t normalCount = m_normalTextures.size();
+    const size_t normalCount = m_normalTextures.size();
     outFile.write(reinterpret_cast<const char*>(&normalCount), sizeof(size_t));
     for (const Texture& normalTexture : m_normalTextures) {
         outFile.write(reinterpret_cast<const char*>(&normalTexture.size), sizeof(glm::ivec2));
         outFile.write(reinterpret_cast<const char*>(normalTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * normalTexture.data.size()));
     }
 
-    size_t metallicRoughnessCount = m_metallicRoughnessTextures.size();
+    const size_t metallicRoughnessCount = m_metallicRoughnessTextures.size();
     outFile.write(reinterpret_cast<const char*>(&metallicRoughnessCount), sizeof(size_t));
     for (const Texture& metallicRoughnessTexture : m_metallicRoughnessTextures) {
         outFile.write(reinterpret_cast<const char*>(&metallicRoughnessTexture.size), sizeof(glm::ivec2));
         outFile.write(reinterpret_cast<const char*>(metallicRoughnessTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * metallicRoughnessTexture.data.size()));
     }
 
-    size_t emissiveCount = m_emissiveTextures.size();
+    const size_t emissiveCount = m_emissiveTextures.size();
     outFile.write(reinterpret_cast<const char*>(&emissiveCount), sizeof(size_t));
     for (const Texture& emissiveTexture : m_emissiveTextures) {
         outFile.write(reinterpret_cast<const char*>(&emissiveTexture.size), sizeof(glm::ivec2));
         outFile.write(reinterpret_cast<const char*>(emissiveTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * emissiveTexture.data.size()));
     }
 
-    size_t materialCount = m_materials.size();
+    const size_t materialCount = m_materials.size();
     outFile.write(reinterpret_cast<const char*>(&materialCount), sizeof(size_t));
     outFile.write(reinterpret_cast<const char*>(m_materials.data()), static_cast<std::streamsize>(sizeof(Material) * materialCount));
 
-    size_t meshCount = m_meshes.size();
+    const size_t meshCount = m_meshes.size();
     outFile.write(reinterpret_cast<const char*>(&meshCount), sizeof(size_t));
     for (const Mesh& mesh : m_meshes) {
-        size_t materialIndex = mesh.materialIndex;
+        const size_t materialIndex = mesh.materialIndex;
         outFile.write(reinterpret_cast<const char*>(&materialIndex), sizeof(size_t));
 
-        size_t vertexCount = mesh.vertices.size();
+        const size_t vertexCount = mesh.vertices.size();
         outFile.write(reinterpret_cast<const char*>(&vertexCount), sizeof(size_t));
         outFile.write(reinterpret_cast<const char*>(mesh.vertices.data()), static_cast<std::streamsize>(sizeof(Vertex) * vertexCount));
 
-        size_t indexCount = mesh.indices.size();
+        const size_t indexCount = mesh.indices.size();
         outFile.write(reinterpret_cast<const char*>(&indexCount), sizeof(size_t));
         outFile.write(reinterpret_cast<const char*>(mesh.indices.data()), static_cast<std::streamsize>(sizeof(uint32_t) * indexCount));
     }
 
-    size_t meshInstanceCount = m_meshInstances.size();
+    const size_t meshInstanceCount = m_meshInstances.size();
     outFile.write(reinterpret_cast<const char*>(&meshInstanceCount), sizeof(size_t));
     outFile.write(reinterpret_cast<const char*>(m_meshInstances.data()), static_cast<std::streamsize>(sizeof(KelpMeshInstance) * meshInstanceCount));
     outFile.close();
+
+    std::cout << "Conversion completed successfully!" << std::endl;
 }

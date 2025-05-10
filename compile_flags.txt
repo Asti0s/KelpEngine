@@ -9,6 +9,7 @@
 -I./external/glm
 -I./external/glslang
 -I./external/imgui
+-I./external/OMM/libraries/omm-lib/include
 -I./external/stb
 -I./external/volk
 -I./external/VulkanMemoryAllocator/include

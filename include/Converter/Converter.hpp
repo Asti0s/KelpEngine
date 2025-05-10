@@ -48,6 +48,7 @@ class Converter {
         void initTextureCollections();
         void loadTextures(fastgltf::Asset& asset, const std::filesystem::path& inputFile);
         static std::pair<glm::ivec2, uint8_t*> loadTexture(fastgltf::Asset& asset, const std::filesystem::path& inputFile, const fastgltf::Texture& gltfTexture, int desiredChannels);
+        void bakeOpacityMicromaps();
         void loadMeshes(fastgltf::Asset& asset);
         void loadGltfScene(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Scene& scene);
         void loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform = glm::mat4(1));
