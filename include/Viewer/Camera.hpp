@@ -1,10 +1,3 @@
-/*
-** EPITECH PROJECT, 2024
-** zappy
-** File description:
-** Camera
-*/
-
 #pragma once
 
 #include "Window.hpp"

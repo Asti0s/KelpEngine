@@ -23,7 +23,7 @@ glslang::TShader::Includer::IncludeResult* ShaderCompiler::FileIncluder::include
 
     std::ifstream file(filePath);
     if (!file.is_open()) {
-        return new IncludeResult(headerName, ("Failed to open include file: " + filePath.string()).c_str(), 0, nullptr);
+        return new IncludeResult(headerName, ("Failed to open include file: " + filePath.string()).c_str(), 0, nullptr);    // NOLINT(cppcoreguidelines-owning-memory)
     }
 
     std::stringstream buffer;

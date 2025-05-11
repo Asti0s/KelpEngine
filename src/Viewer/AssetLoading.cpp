@@ -39,6 +39,14 @@ struct KelpMeshInstance {
     int meshIndex;
 };
 
+void Viewer::funcTime(const std::string& context, const std::function<void()>& func) {
+    const auto timeNow = std::chrono::high_resolution_clock::now();
+    func();
+    const auto timeEnd = std::chrono::high_resolution_clock::now();
+    const auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(timeEnd - timeNow).count();
+    std::cout << context << " in " << duration << " ms" << std::endl;
+}
+
 void Viewer::loadAndUploadTextureCollection(const std::filesystem::path& filePath, std::ifstream& file, std::vector<Texture>& targetCollection, VkFormat textureFormat, int channelCount) {
     // Read texture count
     size_t count = 0;
@@ -563,51 +571,29 @@ void Viewer::loadAssetsFromFile(const std::filesystem::path& filePath) {
     if (!file.is_open())
         throw std::runtime_error("Error opening \"" + filePath.string() + "\": file not found");
 
-
-    // Read textures
-    std::chrono::high_resolution_clock::time_point startTime = std::chrono::high_resolution_clock::now();
-
-    loadAndUploadTextureCollection(filePath, file, m_albedoTextures, VK_FORMAT_R8G8B8A8_UNORM, 4);
-    loadAndUploadTextureCollection(filePath, file, m_alphaTextures, VK_FORMAT_R8_UNORM, 1);
-    loadAndUploadTextureCollection(filePath, file, m_normalTextures, VK_FORMAT_R8G8B8A8_UNORM, 4);
-    loadAndUploadTextureCollection(filePath, file, m_metallicRoughnessTextures, VK_FORMAT_R8G8_UNORM, 2);
-    loadAndUploadTextureCollection(filePath, file, m_emissiveTextures, VK_FORMAT_R8G8B8A8_UNORM, 4);
-
-    std::chrono::high_resolution_clock::time_point endTime = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> elapsedTime = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);
-    std::cout << "Texture loading took " << elapsedTime.count() << " seconds" << std::endl;
-
-    std::cout << "Textures loaded: " << m_albedoTextures.size() << " albedo, " << m_alphaTextures.size() << " alpha, "
-              << m_normalTextures.size() << " normal, " << m_metallicRoughnessTextures.size() << " metallic-roughness, "
-              << m_emissiveTextures.size() << " emissive" << std::endl;
-
-
-    // Read materials
-    startTime = std::chrono::high_resolution_clock::now();
-
-    loadMaterials(file);
-
-    endTime = std::chrono::high_resolution_clock::now();
-    elapsedTime = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);
-    std::cout << "Loaded "<< m_materials.size() << " materials in " << elapsedTime.count() << " seconds" << std::endl;
-
-
-    // Read meshes
-    startTime = std::chrono::high_resolution_clock::now();
-
-    loadMeshes(file);
-
-    endTime = std::chrono::high_resolution_clock::now();
-    elapsedTime = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);
-    std::cout << "Loaded "<< m_meshes.size() << " meshes in " << elapsedTime.count() << " seconds" << std::endl;
-
-
-    // Read mesh instances
-    startTime = std::chrono::high_resolution_clock::now();
-
-    loadMeshInstances(file);
-
-    endTime = std::chrono::high_resolution_clock::now();
-    elapsedTime = std::chrono::duration_cast<std::chrono::duration<double>>(endTime - startTime);
-    std::cout << "Loaded "<< m_accelerationStructureInstances.size() << " mesh instances in " << elapsedTime.count() << " seconds" << std::endl;
+    funcTime("Loaded model", [&]{
+        // Read textures
+        funcTime("Loaded textures", [&]{
+            loadAndUploadTextureCollection(filePath, file, m_albedoTextures, VK_FORMAT_R8G8B8A8_UNORM, 4);
+            loadAndUploadTextureCollection(filePath, file, m_alphaTextures, VK_FORMAT_R8_UNORM, 1);
+            loadAndUploadTextureCollection(filePath, file, m_normalTextures, VK_FORMAT_R8G8B8A8_UNORM, 4);
+            loadAndUploadTextureCollection(filePath, file, m_metallicRoughnessTextures, VK_FORMAT_R8G8_UNORM, 2);
+            loadAndUploadTextureCollection(filePath, file, m_emissiveTextures, VK_FORMAT_R8G8B8A8_UNORM, 4);
+        });
+    
+        // Read materials
+        funcTime("Loaded materials", [&]{
+            loadMaterials(file);
+        });
+    
+        // Read meshes
+        funcTime("Loaded meshes", [&]{
+            loadMeshes(file);
+        });
+    
+        // Read mesh instances
+        funcTime("Loaded scene graph", [&]{
+            loadMeshInstances(file);
+        });
+    });
 }

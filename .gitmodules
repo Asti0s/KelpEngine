@@ -29,3 +29,6 @@
 	path = external/imgui
 	url = https://github.com/ocornut/imgui.git
 	branch = docking
+[submodule "external/OMM"]
+	path = external/OMM
+	url = https://github.com/Asti0s/OMM.git

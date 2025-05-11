@@ -19,7 +19,7 @@
 #include <iostream>
 #include <thread>
 
-void funcTime(const std::string& context, const std::function<void()>& func) {
+void Converter::funcTime(const std::string& context, const std::function<void()>& func) {
     const auto timeNow = std::chrono::high_resolution_clock::now();
     func();
     const auto timeEnd = std::chrono::high_resolution_clock::now();
@@ -188,7 +188,7 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
     // Process alpha textures (extract alpha channel from albedo)
     for (Texture& alphaTexture : m_alphaTextures) {
         threads.emplace_back([&]() {
-            const auto it = std::find_if(m_albedoTextures.begin(), m_albedoTextures.end(),
+            const auto it = std::ranges::find_if(m_albedoTextures,
                 [&alphaTexture](const Texture& texture) {
                     return texture.gltfIndex == alphaTexture.gltfIndex;
                 });
@@ -203,8 +203,8 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
             // Extract alpha channel
             for (int y = 0; y < alphaTexture.size.y; ++y) {
                 for (int x = 0; x < alphaTexture.size.x; ++x) {
-                    const size_t index = y * alphaTexture.size.x + x;
-                    alphaTexture.data[index] = albedoTexture.data[index * 4 + 3];
+                    const size_t index = (y * alphaTexture.size.x) + x;
+                    alphaTexture.data[index] = albedoTexture.data[(index * 4) + 3];
                 }
             }
         });
@@ -234,7 +234,7 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
             metallicRoughnessTexture.data.resize(static_cast<size_t>(size.x * size.y) * 2);
             for (int y = 0; y < size.y; ++y) {
                 for (int x = 0; x < size.x; ++x) {
-                    const size_t index = y * size.x + x;
+                    const size_t index = (y * size.x) + x;
                     const size_t srcIndex = index * 3;
                     const size_t encodedIndex = index * 2;
 
@@ -389,9 +389,6 @@ void Converter::bakeOpacityMicromaps() {
             res = omm::Cpu::GetBakeResultDesc(bakeResultHandle, &bakeResultDesc);
             if (res != omm::Result::SUCCESS)
                 throw std::runtime_error("Failed to get OMM bake result: " + std::to_string(static_cast<int>(res)));
-
-            static int counter = 0;
-            std::cout << counter++ << std::endl;
         }
     }
 }
@@ -439,29 +436,31 @@ void Converter::loadGltfScene(const std::filesystem::path& filePath, const fastg
 void Converter::convert(const std::filesystem::path& inputFile, const std::filesystem::path& outputFile) {
     fastgltf::Asset asset;
 
-    funcTime("Parsed file", [&]() {
-        asset = parseFile(inputFile);
-    });
-
-    funcTime("Loaded materials", [&]() {
-        loadMaterials(asset);
-    });
-
-    funcTime("Loaded textures", [&]() {
-        initTextureCollections();
-        loadTextures(asset, inputFile);
-    });
-
-    funcTime("Loaded meshes", [&]() {
-        loadMeshes(asset);
-    });
-
-    funcTime("Baked opacity micromaps", [&]() {
-        bakeOpacityMicromaps();
-    });
-
-    funcTime("Loaded glTF scene", [&]() {
-        loadGltfScene(inputFile, asset, asset.scenes[0]);
+    funcTime("Converted file", [&]() {
+        funcTime("Parsed file", [&]() {
+            asset = parseFile(inputFile);
+        });
+    
+        funcTime("Loaded materials", [&]() {
+            loadMaterials(asset);
+        });
+    
+        funcTime("Loaded textures", [&]() {
+            initTextureCollections();
+            loadTextures(asset, inputFile);
+        });
+    
+        funcTime("Loaded meshes", [&]() {
+            loadMeshes(asset);
+        });
+    
+        funcTime("Baked opacity micromaps", [&]() {
+            bakeOpacityMicromaps();
+        });
+    
+        funcTime("Loaded glTF scene", [&]() {
+            loadGltfScene(inputFile, asset, asset.scenes[0]);
+        });
     });
 
 

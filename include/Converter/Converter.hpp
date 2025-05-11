@@ -42,6 +42,7 @@ class Converter {
 
     private:
         static fastgltf::Asset parseFile(const std::filesystem::path& inputFile);
+        static void funcTime(const std::string& context, const std::function<void()>& func);
 
         void loadMaterials(const fastgltf::Asset& asset);
         static int processTextureIndex(int originalIndex, std::vector<Texture>& textureCollection);

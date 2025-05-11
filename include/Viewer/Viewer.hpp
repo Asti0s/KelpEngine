@@ -70,6 +70,7 @@ class Viewer {
         void loadMaterials(std::ifstream& file);
         void loadMeshes(std::ifstream& file);
         void loadMeshInstances(std::ifstream& file);
+        static void funcTime(const std::string& context, const std::function<void()>& func);
 
 
     private: // Raytracing preparation
