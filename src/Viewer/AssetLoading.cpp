@@ -49,7 +49,7 @@ void Viewer::loadAndUploadTextureCollection(const std::filesystem::path& filePat
     // Read texture metadata (size and offset in the file) to allow for concurrent reading instead
     std::vector<TextureMetaData> textureMetadata(count);
 
-    for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+    for (size_t i = 0; i < count; ++i) {
         TextureMetaData& tex = textureMetadata[i];
         file.read(reinterpret_cast<char*>(&tex.size), sizeof(tex.size));
         if (tex.size.x <= 0 || tex.size.y <= 0)
@@ -193,7 +193,7 @@ void Viewer::loadMeshes(std::ifstream& file) {
 
 
     // Read mesh data
-    for (size_t i = 0; i < static_cast<size_t>(count); ++i) {
+    for (size_t i = 0; i < count; ++i) {
         // Read material index
         size_t materialIndex = 0;
         file.read(reinterpret_cast<char*>(&materialIndex), sizeof(size_t));
@@ -552,6 +552,7 @@ void Viewer::loadAssetsFromFile(const std::filesystem::path& filePath) {
         .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
         .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+        .anisotropyEnable = VK_TRUE,
         .maxAnisotropy = m_device->getProperties().limits.maxSamplerAnisotropy,
         .minLod = 0,
         .maxLod = VK_LOD_CLAMP_NONE,

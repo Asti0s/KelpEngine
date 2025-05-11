@@ -31,4 +31,4 @@
 	branch = docking
 [submodule "external/OMM"]
 	path = external/OMM
-	url = https://github.com/NVIDIA-RTX/OMM.git
+	url = https://github.com/Asti0s/OMM.git

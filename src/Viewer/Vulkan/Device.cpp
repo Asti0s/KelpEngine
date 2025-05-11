@@ -391,6 +391,7 @@ void Device::findPhysicalDevice() {
 
         std::cout << "Suitable device found: \"" << properties.deviceName << "\":" << std::endl;
         m_physicalDevice = device;
+        break;
     }
 
     if (m_physicalDevice == VK_NULL_HANDLE)

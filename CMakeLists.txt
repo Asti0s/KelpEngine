@@ -28,6 +28,7 @@ ${IMGUI_DIR}/backends/imgui_impl_vulkan.cpp
 # Submodules
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/fastgltf                  ${CMAKE_BINARY_DIR}/fastgltf)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/glfw                      ${CMAKE_BINARY_DIR}/glfw)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/glm                       ${CMAKE_BINARY_DIR}/glm)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/OMM                       ${CMAKE_BINARY_DIR}/OMM)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/SPIRV-Headers             ${CMAKE_BINARY_DIR}/SPIRV-Headers)
 add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external/SPIRV-Tools               ${CMAKE_BINARY_DIR}/SPIRV-Tools)
@@ -52,6 +53,8 @@ target_link_libraries(KelpEngine PRIVATE
     volk
     GPUOpen::VulkanMemoryAllocator
 )
+
+set(CMAKE_CXX_FLAGS "-ggdb3")
 
 # Include directories
 target_include_directories(KelpEngine PUBLIC

@@ -2,9 +2,9 @@
 #include "Viewer/Vulkan/Device.hpp"
 #include "Viewer/Vulkan/Utils.hpp"
 
+#include <SPIRV/GlslangToSpv.h>
 #include <glslang/MachineIndependent/Versions.h>
 #include <glslang/Public/ResourceLimits.h>
-#include <glslang/SPIRV/GlslangToSpv.h>
 
 #include <array>
 #include <fstream>
