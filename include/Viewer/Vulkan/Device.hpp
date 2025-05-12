@@ -111,6 +111,8 @@ class Device {
 
 
     private:
+        std::shared_ptr<Window> m_window;
+
         VkInstance m_instance{};
         VkPhysicalDevice m_physicalDevice{};
         VkDevice m_device{};

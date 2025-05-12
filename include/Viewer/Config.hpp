@@ -18,12 +18,13 @@ namespace Config {
         "VK_LAYER_KHRONOS_validation"
     };
 
-    static constexpr std::array<const char *const, 5> REQUIRED_DEVICE_EXTENSIONS = {
+    static constexpr std::array<const char *const, 6> REQUIRED_DEVICE_EXTENSIONS = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_EXT_MEMORY_BUDGET_EXTENSION_NAME,
         VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
         VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
-        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME
+        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+        VK_EXT_OPACITY_MICROMAP_EXTENSION_NAME
     };
 
     static constexpr std::array<const char *, 1> REQUIRED_INSTANCE_EXTENSIONS = {

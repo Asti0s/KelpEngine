@@ -11,7 +11,7 @@
 
 class Buffer {
     public:
-        Buffer(const std::shared_ptr<Device>& device, size_t size, VkBufferUsageFlags bufferUsage, VmaAllocationCreateFlags allocationFlags = 0);
+        Buffer(const std::shared_ptr<Device>& device, size_t size, VkBufferUsageFlags bufferUsage, VmaAllocationCreateFlags allocationFlags = 0, VkDeviceSize alignment = 0);
         ~Buffer();
 
         Buffer(const Buffer&) = delete;

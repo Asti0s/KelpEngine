@@ -18,7 +18,7 @@
 #include <stdexcept>
 #include <vector>
 
-Device::Device(const std::shared_ptr<Window>& window) {
+Device::Device(const std::shared_ptr<Window>& window) : m_window(window) {
     VK_CHECK(volkInitialize());
 
     createInstance();
@@ -233,8 +233,13 @@ void Device::findMaxMsaaSamples() {
 }
 
 bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
+    VkPhysicalDeviceOpacityMicromapFeaturesEXT opacityMicromapFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT,
+    };
+
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+        .pNext = &opacityMicromapFeatures,
     };
 
     VkPhysicalDeviceRayTracingPipelineFeaturesKHR rayTracingPipelineFeatures{
@@ -277,7 +282,8 @@ bool Device::checkForRequiredFeatures(VkPhysicalDevice device) {
         && static_cast<bool>(deviceFeatures2.features.samplerAnisotropy)
         && static_cast<bool>(accelerationStructureFeatures.accelerationStructure)
         && static_cast<bool>(accelerationStructureFeatures.descriptorBindingAccelerationStructureUpdateAfterBind)
-        && static_cast<bool>(rayTracingPipelineFeatures.rayTracingPipeline);
+        && static_cast<bool>(rayTracingPipelineFeatures.rayTracingPipeline)
+        && static_cast<bool>(opacityMicromapFeatures.micromap);
 }
 
 bool Device::checkForRequiredExtensions(VkPhysicalDevice device) {
@@ -404,8 +410,14 @@ void Device::createDevice() {
 
 
     // Required features
+    VkPhysicalDeviceOpacityMicromapFeaturesEXT opacityMicromapFeatures{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_OPACITY_MICROMAP_FEATURES_EXT,
+        .micromap = VK_TRUE,
+    };
+
     VkPhysicalDeviceAccelerationStructureFeaturesKHR accelerationStructureFeatures{
         .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+        .pNext = &opacityMicromapFeatures,
         .accelerationStructure = VK_TRUE,
         .descriptorBindingAccelerationStructureUpdateAfterBind = VK_TRUE,
     };

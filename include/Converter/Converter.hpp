@@ -1,6 +1,7 @@
 #pragma once
 
 #include "glm/ext/vector_int2.hpp"
+#include "omm.hpp"
 #include "shared.hpp"
 
 #include "fastgltf/types.hpp"
@@ -19,6 +20,7 @@ struct Mesh {
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     int materialIndex;
+    int ommIndex;
     int gltfIndex;
 };
 
@@ -57,6 +59,7 @@ class Converter {
 
         std::vector<Mesh> m_meshes;
         std::vector<KelpMeshInstance> m_meshInstances;
+        omm::Cpu::SerializedResult m_serializedOmms = nullptr;
 
         std::vector<Material> m_materials;
 

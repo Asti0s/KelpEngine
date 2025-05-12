@@ -4,6 +4,7 @@
 #include "Viewer/Vulkan/Device.hpp"
 #include "Viewer/Vulkan/Image.hpp"
 #include "Viewer/Vulkan/Utils.hpp"
+#include "omm.hpp"
 #include "shared.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
@@ -209,6 +210,129 @@ void Viewer::loadMeshes(std::ifstream& file) {
             throw std::runtime_error("Error: Material index out of bounds: " + std::to_string(materialIndex) + " >= " + std::to_string(m_materials.size()));
 
 
+        // Read omm index
+        int ommIndex = 0;
+        std::unique_ptr<Buffer> micromapBuffer;
+        VkMicromapEXT micromap = VK_NULL_HANDLE;
+
+        file.read(reinterpret_cast<char*>(&ommIndex), sizeof(int));
+        if (ommIndex != -1) {
+            const omm::Cpu::BakeResultDesc& bakeResultDesc = m_ommBakeResults.at(ommIndex);
+
+
+            // Get micromap build size
+            std::vector<VkMicromapUsageEXT> usages(bakeResultDesc.descArrayHistogramCount);
+            for (uint32_t i = 0; i < bakeResultDesc.descArrayHistogramCount; ++i) {
+                usages[i] = VkMicromapUsageEXT{
+                    .count = bakeResultDesc.descArrayHistogram[i].count,
+                    .subdivisionLevel = bakeResultDesc.descArrayHistogram[i].subdivisionLevel,
+                    .format = bakeResultDesc.descArrayHistogram[i].format,
+                };
+            }
+
+            const VkMicromapBuildInfoEXT micromapSizeInfo = {
+                .sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT,
+                .type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT,
+                .mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT,
+                .usageCountsCount = static_cast<uint32_t>(usages.size()),
+                .pUsageCounts = usages.data(),
+            };
+
+            VkMicromapBuildSizesInfoEXT buildSizes = { .sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT };
+            vkGetMicromapBuildSizesEXT(m_device->getHandle(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &micromapSizeInfo, &buildSizes);
+
+
+            // Micromap triangle data
+            const uint32_t triangleCount = bakeResultDesc.indexCount / 3;
+            std::vector<VkMicromapTriangleEXT> triangleInfoData(triangleCount);
+
+            for (uint32_t i = 0; i < triangleCount; ++i) {
+                uint32_t dataOffset = 0;
+                uint8_t subdivisionLevel = bakeResultDesc.descArrayHistogram[0].subdivisionLevel;
+                uint8_t format = bakeResultDesc.descArrayHistogram[0].format;
+
+
+                triangleInfoData[i] = VkMicromapTriangleEXT{
+                    .dataOffset = dataOffset,
+                    .subdivisionLevel = subdivisionLevel,
+                    .format = format,
+                };
+            }
+
+            VkDeviceSize triangleDataBufferSize = triangleInfoData.size() * sizeof(VkMicromapTriangleEXT);
+
+
+            // Creating buffers
+            micromapBuffer = std::make_unique<Buffer>(m_device, buildSizes.micromapSize, VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            Buffer scratchBuffer = Buffer(m_device, buildSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
+            Buffer arrayDataBuffer = Buffer(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            Buffer arrayDataStagingBuffer = Buffer(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+            void *mapped = nullptr;
+            arrayDataStagingBuffer.map(&mapped);
+            memcpy(mapped, bakeResultDesc.arrayData, bakeResultDesc.arrayDataSize);
+            arrayDataStagingBuffer.unmap();
+
+            Buffer triangleDataBuffer = Buffer(m_device, triangleDataBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            Buffer triangleDataStagingBuffer = Buffer(m_device, triangleDataBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+            triangleDataStagingBuffer.map(&mapped);
+            memcpy(mapped, triangleInfoData.data(), triangleDataBufferSize);
+            triangleDataStagingBuffer.unmap();
+
+
+            // Micromap creation
+            const VkMicromapCreateInfoEXT micromapCreateInfo = {
+                .sType = VK_STRUCTURE_TYPE_MICROMAP_CREATE_INFO_EXT,
+                .createFlags = 0,
+                .buffer = micromapBuffer->getHandle(),
+                .offset = 0,
+                .size = buildSizes.micromapSize,
+                .type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT,
+                .deviceAddress = 0,
+            };
+
+            VK_CHECK(vkCreateMicromapEXT(m_device->getHandle(), &micromapCreateInfo, nullptr, &micromap));
+
+
+            // Micromap build
+            VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+                // Uploading data to gpu
+                const VkBufferCopy copyRegionArray = { .srcOffset = 0, .dstOffset = 0, .size = bakeResultDesc.arrayDataSize };
+                vkCmdCopyBuffer(commandBuffer, arrayDataStagingBuffer.getHandle(), arrayDataBuffer.getHandle(), 1, &copyRegionArray);
+
+                const VkBufferCopy copyRegionTriangle = { .srcOffset = 0, .dstOffset = 0, .size = triangleDataBufferSize };
+                vkCmdCopyBuffer(commandBuffer, triangleDataStagingBuffer.getHandle(), triangleDataBuffer.getHandle(), 1, &copyRegionTriangle);
+
+
+                // Ensure the data is ready before building the micromap
+                VkMemoryBarrier memoryBarrier = {
+                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+                    .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                    .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
+                };
+                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, nullptr, 0, nullptr);
+
+
+                // Building the micromap
+                const VkMicromapBuildInfoEXT micromapBuildInfo = {
+                    .sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT,
+                    .type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT,
+                    .flags = 0,
+                    .mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT,
+                    .dstMicromap = micromap,
+                    .usageCountsCount = static_cast<uint32_t>(usages.size()),
+                    .pUsageCounts = usages.data(),
+                    .data = { .deviceAddress = arrayDataBuffer.getDeviceAddress() },
+                    .scratchData = { .deviceAddress = scratchBuffer.getDeviceAddress() },
+                    .triangleArray = { .deviceAddress = triangleDataBuffer.getDeviceAddress() },
+                    .triangleArrayStride = sizeof(VkMicromapTriangleEXT),
+                };
+
+                vkCmdBuildMicromapsEXT(commandBuffer, 1, &micromapBuildInfo);
+            }   m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+        }
+
+
         // Read vertices
         size_t vertexCount = 0;
         file.read(reinterpret_cast<char*>(&vertexCount), sizeof(size_t));
@@ -402,6 +526,8 @@ void Viewer::loadMeshes(std::ifstream& file) {
             .materialIndex = static_cast<int>(materialIndex),
         });
     }
+
+    omm::Cpu::DestroyDeserializedResult(m_ommDeserializedResult);
 }
 
 void Viewer::loadMeshInstances(std::ifstream& file) {
@@ -547,6 +673,52 @@ void Viewer::loadMeshInstances(std::ifstream& file) {
     m_descriptorManager.storeAccelerationStructure(m_topLevelAccelerationStructure);
 }
 
+void Viewer::loadOMMs(std::ifstream& file) {
+    // Baker creation
+    const omm::BakerCreationDesc desc {
+        .type = omm::BakerType::CPU,
+    };
+
+    omm::Baker baker = nullptr;
+    omm::Result res = omm::CreateBaker(desc, &baker);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to create OMM baker: " + std::to_string(static_cast<int>(res)));
+
+
+    // Reading serialized blob
+    size_t blobSize = 0;
+    file.read(reinterpret_cast<char*>(&blobSize), sizeof(size_t));
+    if (blobSize == 0)
+        throw std::runtime_error("Error: OMM blob size is zero");
+
+    std::vector<uint8_t> blobData(blobSize);
+    file.read(reinterpret_cast<char*>(blobData.data()), static_cast<std::streamsize>(blobSize));
+
+    const omm::Cpu::BlobDesc blobDesc{
+        .data = blobData.data(),
+        .size = blobSize,
+    };
+
+
+    // Deserializing blob
+    res = omm::Cpu::Deserialize(baker, blobDesc, &m_ommDeserializedResult);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to deserialize OMM blob: " + std::to_string(static_cast<int>(res)));
+
+    const omm::Cpu::DeserializedDesc *deserializedDesc = nullptr;
+    res = omm::Cpu::GetDeserializedDesc(m_ommDeserializedResult, &deserializedDesc);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to get OMM deserialized desc: " + std::to_string(static_cast<int>(res)));
+
+    m_ommBakeResults.resize(deserializedDesc->numResultDescs);
+    for (int i = 0; i < deserializedDesc->numResultDescs; ++i)
+        m_ommBakeResults[i] = deserializedDesc->resultDescs[i];
+
+    res = omm::DestroyBaker(baker);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to destroy OMM baker: " + std::to_string(static_cast<int>(res)));
+}
+
 void Viewer::loadAssetsFromFile(const std::filesystem::path& filePath) {
     if (!std::filesystem::exists(filePath))
         throw std::runtime_error("Error loading \"" + filePath.string() + "\": file not found");
@@ -580,17 +752,22 @@ void Viewer::loadAssetsFromFile(const std::filesystem::path& filePath) {
             loadAndUploadTextureCollection(filePath, file, m_metallicRoughnessTextures, VK_FORMAT_R8G8_UNORM, 2);
             loadAndUploadTextureCollection(filePath, file, m_emissiveTextures, VK_FORMAT_R8G8B8A8_UNORM, 4);
         });
-    
+
         // Read materials
         funcTime("Loaded materials", [&]{
             loadMaterials(file);
         });
-    
+
+        // Read OMMs
+        funcTime("Loaded OMMs", [&]{
+            loadOMMs(file);
+        });
+
         // Read meshes
         funcTime("Loaded meshes", [&]{
             loadMeshes(file);
         });
-    
+
         // Read mesh instances
         funcTime("Loaded scene graph", [&]{
             loadMeshInstances(file);

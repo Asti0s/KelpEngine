@@ -10,7 +10,7 @@
 #include <memory>
 #include <utility>
 
-Buffer::Buffer(const std::shared_ptr<Device>& device, size_t size, VkBufferUsageFlags bufferUsage, VmaAllocationCreateFlags allocationFlags) : m_device(device) {
+Buffer::Buffer(const std::shared_ptr<Device>& device, size_t size, VkBufferUsageFlags bufferUsage, VmaAllocationCreateFlags allocationFlags, VkDeviceSize alignement) : m_device(device) {
     // Buffer creation
     const VkBufferCreateInfo bufferCreateInfo = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -24,7 +24,7 @@ Buffer::Buffer(const std::shared_ptr<Device>& device, size_t size, VkBufferUsage
         .usage = VMA_MEMORY_USAGE_AUTO,
     };
 
-    VK_CHECK(vmaCreateBuffer(m_device->getAllocator(), &bufferCreateInfo, &allocationInfo, &m_buffer, &m_allocation, nullptr));
+    VK_CHECK(vmaCreateBufferWithAlignment(m_device->getAllocator(), &bufferCreateInfo, &allocationInfo, alignement, &m_buffer, &m_allocation, nullptr));
 
 
     // Device address

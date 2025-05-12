@@ -7,6 +7,7 @@
 #include "Vulkan/Device.hpp"
 #include "Vulkan/Image.hpp"
 #include "Vulkan/Swapchain.hpp"
+#include "omm.hpp"
 #include "shared.hpp"
 
 #include "glm/ext/vector_int2.hpp"
@@ -57,6 +58,9 @@ class Viewer {
         std::vector<Texture> m_metallicRoughnessTextures;
         std::vector<Texture> m_emissiveTextures;
 
+        omm::Cpu::DeserializedResult m_ommDeserializedResult = nullptr;
+        std::vector<omm::Cpu::BakeResultDesc> m_ommBakeResults;
+
         std::vector<std::shared_ptr<Mesh>> m_meshes;
         std::vector<VkAccelerationStructureInstanceKHR> m_accelerationStructureInstances;
         std::vector<Material> m_materials;
@@ -68,6 +72,7 @@ class Viewer {
         void loadAssetsFromFile(const std::filesystem::path& filePath);
         void loadAndUploadTextureCollection(const std::filesystem::path& filePath, std::ifstream& file, std::vector<Texture>& targetCollection, VkFormat textureFormat, int channelCount);
         void loadMaterials(std::ifstream& file);
+        void loadOMMs(std::ifstream& file);
         void loadMeshes(std::ifstream& file);
         void loadMeshInstances(std::ifstream& file);
         static void funcTime(const std::string& context, const std::function<void()>& func);

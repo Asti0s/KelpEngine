@@ -54,8 +54,6 @@ target_link_libraries(KelpEngine PRIVATE
     GPUOpen::VulkanMemoryAllocator
 )
 
-set(CMAKE_CXX_FLAGS "-ggdb3")
-
 # Include directories
 target_include_directories(KelpEngine PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

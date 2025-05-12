@@ -312,7 +312,8 @@ void Converter::loadMeshes(fastgltf::Asset& asset) {
                 .vertices = std::move(vertices),
                 .indices = std::move(indices),
                 .materialIndex = static_cast<int>(primitive.materialIndex.value()),
-                .gltfIndex = static_cast<int>(i)
+                .ommIndex = -1,
+                .gltfIndex = static_cast<int>(i),
             });
         }
     }
@@ -330,10 +331,14 @@ void Converter::bakeOpacityMicromaps() {
         throw std::runtime_error("Failed to create OMM baker: " + std::to_string(static_cast<int>(res)));
 
 
-    for (const auto& mesh: m_meshes) {
+    // OMM resources
+    std::vector<omm::Cpu::BakeResultDesc> bakeResultDescs;  // Used for serialization
+    std::vector<omm::Cpu::BakeResult> bakeResults;          // We have to keep them for destroying after serialization
+
+
+    for (auto& mesh: m_meshes) {
         const Material& material = m_materials.at(mesh.materialIndex);
 
-        // std::cout << static_cast<int>(material.alphaMode) << " " << material.alphaTexture << std::endl;
         if (material.alphaMode != static_cast<int>(fastgltf::AlphaMode::Opaque) && material.alphaTexture != -1) {
             const Texture& alphaTexture = m_alphaTextures[material.alphaTexture];
 
@@ -376,7 +381,7 @@ void Converter::bakeOpacityMicromaps() {
                 .indexBuffer = mesh.indices.data(),
                 .indexCount = static_cast<uint32_t>(mesh.indices.size()),
                 .alphaCutoff = material.alphaCutoff,
-                .format = omm::Format::OC1_4_State,
+                .format = omm::Format::OC1_2_State,
                 .unknownStatePromotion = omm::UnknownStatePromotion::ForceOpaque,
             };
 
@@ -389,8 +394,43 @@ void Converter::bakeOpacityMicromaps() {
             res = omm::Cpu::GetBakeResultDesc(bakeResultHandle, &bakeResultDesc);
             if (res != omm::Result::SUCCESS)
                 throw std::runtime_error("Failed to get OMM bake result: " + std::to_string(static_cast<int>(res)));
+
+
+            // Adding to the list for serialization
+            mesh.ommIndex = static_cast<int>(bakeResultDescs.size());
+            bakeResultDescs.emplace_back(*bakeResultDesc);
+            bakeResults.emplace_back(bakeResultHandle);
+
+
+            // Clean up
+            res = omm::Cpu::DestroyTexture(bakerHandle, textureHandle);
+            if (res != omm::Result::SUCCESS)
+                throw std::runtime_error("Failed to destroy OMM texture: " + std::to_string(static_cast<int>(res)));
         }
     }
+
+
+    // OMM Serialization
+    const omm::Cpu::DeserializedDesc deserializedDesc{
+        .numResultDescs = static_cast<int>(bakeResultDescs.size()),
+        .resultDescs = bakeResultDescs.data(),
+    };
+
+    res = omm::Cpu::Serialize(bakerHandle, deserializedDesc, &m_serializedOmms);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to serialize OMM: " + std::to_string(static_cast<int>(res)));
+
+
+    // Clean up (destroying bake results and baker)
+    for (const auto& bakeResult : bakeResults) {
+        res = omm::Cpu::DestroyBakeResult(bakeResult);
+        if (res != omm::Result::SUCCESS)
+            throw std::runtime_error("Failed to destroy OMM bake result: " + std::to_string(static_cast<int>(res)));
+    }
+
+    res = omm::DestroyBaker(bakerHandle);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to destroy OMM baker: " + std::to_string(static_cast<int>(res)));
 }
 
 void Converter::loadGltfNode(const std::filesystem::path& filePath, const fastgltf::Asset& asset, const fastgltf::Node& node, const glm::mat4& parentTransform) {
@@ -440,35 +480,37 @@ void Converter::convert(const std::filesystem::path& inputFile, const std::files
         funcTime("Parsed file", [&]() {
             asset = parseFile(inputFile);
         });
-    
+
         funcTime("Loaded materials", [&]() {
             loadMaterials(asset);
         });
-    
+
         funcTime("Loaded textures", [&]() {
             initTextureCollections();
             loadTextures(asset, inputFile);
         });
-    
+
         funcTime("Loaded meshes", [&]() {
             loadMeshes(asset);
         });
-    
+
         funcTime("Baked opacity micromaps", [&]() {
             bakeOpacityMicromaps();
         });
-    
+
         funcTime("Loaded glTF scene", [&]() {
             loadGltfScene(inputFile, asset, asset.scenes[0]);
         });
     });
 
 
-    // Write to output file
+    // Opening file to write in
     std::ofstream outFile(outputFile, std::ios::binary);
     if (!outFile.is_open())
         throw std::runtime_error("Failed to open output file: " + outputFile.string());
 
+
+    // Writing textures
     const size_t albedoCount = m_albedoTextures.size();
     outFile.write(reinterpret_cast<const char*>(&albedoCount), sizeof(size_t));
     for (const Texture& albedoTexture : m_albedoTextures) {
@@ -504,15 +546,37 @@ void Converter::convert(const std::filesystem::path& inputFile, const std::files
         outFile.write(reinterpret_cast<const char*>(emissiveTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * emissiveTexture.data.size()));
     }
 
+
+    // Writing materials
     const size_t materialCount = m_materials.size();
     outFile.write(reinterpret_cast<const char*>(&materialCount), sizeof(size_t));
     outFile.write(reinterpret_cast<const char*>(m_materials.data()), static_cast<std::streamsize>(sizeof(Material) * materialCount));
 
+
+    // Writing OMMs
+    const omm::Cpu::BlobDesc* blobDesc = nullptr;
+    omm::Result res = omm::Cpu::GetSerializedResultDesc(m_serializedOmms, &blobDesc);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to get serialized OMM result desc: " + std::to_string(static_cast<int>(res)));
+
+    const size_t blobSize = blobDesc->size;
+    outFile.write(reinterpret_cast<const char*>(&blobSize), sizeof(size_t));
+    outFile.write(reinterpret_cast<const char*>(blobDesc->data), static_cast<std::streamsize>(sizeof(uint8_t) * blobSize));
+
+    res = omm::Cpu::DestroySerializedResult(m_serializedOmms);
+    if (res != omm::Result::SUCCESS)
+        throw std::runtime_error("Failed to destroy serialized OMM result: " + std::to_string(static_cast<int>(res)));
+
+
+    // Writing meshes
     const size_t meshCount = m_meshes.size();
     outFile.write(reinterpret_cast<const char*>(&meshCount), sizeof(size_t));
     for (const Mesh& mesh : m_meshes) {
         const size_t materialIndex = mesh.materialIndex;
         outFile.write(reinterpret_cast<const char*>(&materialIndex), sizeof(size_t));
+
+        const int ommIndex = mesh.ommIndex;
+        outFile.write(reinterpret_cast<const char*>(&ommIndex), sizeof(int));
 
         const size_t vertexCount = mesh.vertices.size();
         outFile.write(reinterpret_cast<const char*>(&vertexCount), sizeof(size_t));
@@ -523,10 +587,13 @@ void Converter::convert(const std::filesystem::path& inputFile, const std::files
         outFile.write(reinterpret_cast<const char*>(mesh.indices.data()), static_cast<std::streamsize>(sizeof(uint32_t) * indexCount));
     }
 
+
+    // Write mesh instances
     const size_t meshInstanceCount = m_meshInstances.size();
     outFile.write(reinterpret_cast<const char*>(&meshInstanceCount), sizeof(size_t));
     outFile.write(reinterpret_cast<const char*>(m_meshInstances.data()), static_cast<std::streamsize>(sizeof(KelpMeshInstance) * meshInstanceCount));
-    outFile.close();
 
+
+    outFile.close();
     std::cout << "Conversion completed successfully!" << std::endl;
 }
