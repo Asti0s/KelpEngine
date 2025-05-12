@@ -214,6 +214,9 @@ void Viewer::loadMeshes(std::ifstream& file) {
         int ommIndex = 0;
         std::unique_ptr<Buffer> micromapBuffer;
         VkMicromapEXT micromap = VK_NULL_HANDLE;
+        std::unique_ptr<Buffer> ommIndexBuffer;
+        std::vector<VkMicromapUsageEXT> blasOmmUsageCounts;
+        VkAccelerationStructureTrianglesOpacityMicromapEXT ommLinkInfo{};
 
         file.read(reinterpret_cast<char*>(&ommIndex), sizeof(int));
         if (ommIndex != -1) {
@@ -247,15 +250,10 @@ void Viewer::loadMeshes(std::ifstream& file) {
             std::vector<VkMicromapTriangleEXT> triangleInfoData(triangleCount);
 
             for (uint32_t i = 0; i < triangleCount; ++i) {
-                uint32_t dataOffset = 0;
-                uint8_t subdivisionLevel = bakeResultDesc.descArrayHistogram[0].subdivisionLevel;
-                uint8_t format = bakeResultDesc.descArrayHistogram[0].format;
-
-
                 triangleInfoData[i] = VkMicromapTriangleEXT{
-                    .dataOffset = dataOffset,
-                    .subdivisionLevel = subdivisionLevel,
-                    .format = format,
+                    .dataOffset = 0,
+                    .subdivisionLevel = bakeResultDesc.descArrayHistogram[0].subdivisionLevel,
+                    .format = bakeResultDesc.descArrayHistogram[0].format,
                 };
             }
 
@@ -305,7 +303,7 @@ void Viewer::loadMeshes(std::ifstream& file) {
 
 
                 // Ensure the data is ready before building the micromap
-                VkMemoryBarrier memoryBarrier = {
+                const VkMemoryBarrier memoryBarrier = {
                     .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                     .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
                     .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
@@ -317,7 +315,7 @@ void Viewer::loadMeshes(std::ifstream& file) {
                 const VkMicromapBuildInfoEXT micromapBuildInfo = {
                     .sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT,
                     .type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT,
-                    .flags = 0,
+                    .flags = VK_BUILD_MICROMAP_PREFER_FAST_TRACE_BIT_EXT,
                     .mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT,
                     .dstMicromap = micromap,
                     .usageCountsCount = static_cast<uint32_t>(usages.size()),
@@ -330,6 +328,41 @@ void Viewer::loadMeshes(std::ifstream& file) {
 
                 vkCmdBuildMicromapsEXT(commandBuffer, 1, &micromapBuildInfo);
             }   m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+
+
+            // OMM index buffer
+            const VkIndexType indexType = bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+
+            Buffer ommIndexStagingBuffer(m_device, bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? bakeResultDesc.indexCount * sizeof(uint16_t) : bakeResultDesc.indexCount * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
+            ommIndexStagingBuffer.map(&mapped);
+            memcpy(mapped, bakeResultDesc.indexBuffer, bakeResultDesc.indexCount * (bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t)));
+            ommIndexStagingBuffer.unmap();
+            ommIndexBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.indexCount * (bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+            commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+                ommIndexBuffer->copyFrom(commandBuffer, ommIndexStagingBuffer.getHandle(), bakeResultDesc.indexCount * (bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t)));
+            } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+
+            blasOmmUsageCounts.resize(bakeResultDesc.indexHistogramCount);
+            for (uint32_t i = 0; i < bakeResultDesc.indexHistogramCount; ++i) {
+                blasOmmUsageCounts[i] = VkMicromapUsageEXT{
+                    .count = bakeResultDesc.indexHistogram[i].count,
+                    .subdivisionLevel = bakeResultDesc.indexHistogram[i].subdivisionLevel,
+                    .format = bakeResultDesc.indexHistogram[i].format,
+                };
+            }
+
+
+            ommLinkInfo = {
+                .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT,
+                .pNext = nullptr,
+                .indexType = indexType,
+                .indexBuffer = {.deviceAddress = ommIndexBuffer->getDeviceAddress()},
+                .indexStride = bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t),
+                .baseTriangle = 0,
+                .usageCountsCount = static_cast<uint32_t>(blasOmmUsageCounts.size()),
+                .pUsageCounts = blasOmmUsageCounts.data(),
+                .micromap = micromap,
+            };
         }
 
 
@@ -386,6 +419,7 @@ void Viewer::loadMeshes(std::ifstream& file) {
             .geometry = {
                 .triangles = {
                     .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
+                    .pNext = ommIndex != -1 ? &ommLinkInfo : nullptr,
                     .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
                     .vertexData = {
                         .deviceAddress = vertexBuffer.getDeviceAddress(),
@@ -398,7 +432,7 @@ void Viewer::loadMeshes(std::ifstream& file) {
                     },
                 },
             },
-            .flags = static_cast<VkGeometryFlagsKHR>(static_cast<fastgltf::AlphaMode>(m_materials[materialIndex].alphaMode) == fastgltf::AlphaMode::Opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR),
+            .flags = static_cast<VkGeometryFlagsKHR>(static_cast<fastgltf::AlphaMode>(m_materials[materialIndex].alphaMode) == fastgltf::AlphaMode::Opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0),
         };
 
         const VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{
