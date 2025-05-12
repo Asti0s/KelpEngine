@@ -211,10 +211,14 @@ void Viewer::loadMeshes(std::ifstream& file) {
 
 
         // Read omm index
-        int ommIndex = 0;
-        std::unique_ptr<Buffer> micromapBuffer;
+        int ommIndex = -1;
         VkMicromapEXT micromap = VK_NULL_HANDLE;
+
+        std::unique_ptr<Buffer> micromapBuffer;
         std::unique_ptr<Buffer> ommIndexBuffer;
+        std::unique_ptr<Buffer> ommArrayDataBuffer;
+        std::unique_ptr<Buffer> ommTriangleDataBuffer;
+
         std::vector<VkMicromapUsageEXT> blasOmmUsageCounts;
         VkAccelerationStructureTrianglesOpacityMicromapEXT ommLinkInfo{};
 
@@ -246,35 +250,31 @@ void Viewer::loadMeshes(std::ifstream& file) {
 
 
             // Micromap triangle data
-            const uint32_t triangleCount = bakeResultDesc.indexCount / 3;
-            std::vector<VkMicromapTriangleEXT> triangleInfoData(triangleCount);
-
-            for (uint32_t i = 0; i < triangleCount; ++i) {
+            std::vector<VkMicromapTriangleEXT> triangleInfoData(bakeResultDesc.descArrayCount);
+            for (uint32_t i = 0; i < bakeResultDesc.descArrayCount; ++i) {
                 triangleInfoData[i] = VkMicromapTriangleEXT{
-                    .dataOffset = 0,
-                    .subdivisionLevel = bakeResultDesc.descArrayHistogram[0].subdivisionLevel,
-                    .format = bakeResultDesc.descArrayHistogram[0].format,
+                    .dataOffset = bakeResultDesc.descArray[i].offset,
+                    .subdivisionLevel = bakeResultDesc.descArray[i].subdivisionLevel,
+                    .format = bakeResultDesc.descArray[i].format,
                 };
             }
-
-            VkDeviceSize triangleDataBufferSize = triangleInfoData.size() * sizeof(VkMicromapTriangleEXT);
 
 
             // Creating buffers
             micromapBuffer = std::make_unique<Buffer>(m_device, buildSizes.micromapSize, VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
             Buffer scratchBuffer = Buffer(m_device, buildSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-            Buffer arrayDataBuffer = Buffer(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            ommArrayDataBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
             Buffer arrayDataStagingBuffer = Buffer(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
             void *mapped = nullptr;
             arrayDataStagingBuffer.map(&mapped);
             memcpy(mapped, bakeResultDesc.arrayData, bakeResultDesc.arrayDataSize);
             arrayDataStagingBuffer.unmap();
 
-            Buffer triangleDataBuffer = Buffer(m_device, triangleDataBufferSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
-            Buffer triangleDataStagingBuffer = Buffer(m_device, triangleDataBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+            ommTriangleDataBuffer = std::make_unique<Buffer>(m_device, triangleInfoData.size() * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            Buffer triangleDataStagingBuffer = Buffer(m_device, triangleInfoData.size() * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
             triangleDataStagingBuffer.map(&mapped);
-            memcpy(mapped, triangleInfoData.data(), triangleDataBufferSize);
+            memcpy(mapped, triangleInfoData.data(), triangleInfoData.size() * sizeof(VkMicromapTriangleEXT));
             triangleDataStagingBuffer.unmap();
 
 
@@ -296,10 +296,10 @@ void Viewer::loadMeshes(std::ifstream& file) {
             VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
                 // Uploading data to gpu
                 const VkBufferCopy copyRegionArray = { .srcOffset = 0, .dstOffset = 0, .size = bakeResultDesc.arrayDataSize };
-                vkCmdCopyBuffer(commandBuffer, arrayDataStagingBuffer.getHandle(), arrayDataBuffer.getHandle(), 1, &copyRegionArray);
+                vkCmdCopyBuffer(commandBuffer, arrayDataStagingBuffer.getHandle(), ommArrayDataBuffer->getHandle(), 1, &copyRegionArray);
 
-                const VkBufferCopy copyRegionTriangle = { .srcOffset = 0, .dstOffset = 0, .size = triangleDataBufferSize };
-                vkCmdCopyBuffer(commandBuffer, triangleDataStagingBuffer.getHandle(), triangleDataBuffer.getHandle(), 1, &copyRegionTriangle);
+                const VkBufferCopy copyRegionTriangle = { .srcOffset = 0, .dstOffset = 0, .size = triangleInfoData.size() * sizeof(VkMicromapTriangleEXT) };
+                vkCmdCopyBuffer(commandBuffer, triangleDataStagingBuffer.getHandle(), ommTriangleDataBuffer->getHandle(), 1, &copyRegionTriangle);
 
 
                 // Ensure the data is ready before building the micromap
@@ -320,9 +320,9 @@ void Viewer::loadMeshes(std::ifstream& file) {
                     .dstMicromap = micromap,
                     .usageCountsCount = static_cast<uint32_t>(usages.size()),
                     .pUsageCounts = usages.data(),
-                    .data = { .deviceAddress = arrayDataBuffer.getDeviceAddress() },
+                    .data = { .deviceAddress = ommArrayDataBuffer->getDeviceAddress() },
                     .scratchData = { .deviceAddress = scratchBuffer.getDeviceAddress() },
-                    .triangleArray = { .deviceAddress = triangleDataBuffer.getDeviceAddress() },
+                    .triangleArray = { .deviceAddress = ommTriangleDataBuffer->getDeviceAddress() },
                     .triangleArrayStride = sizeof(VkMicromapTriangleEXT),
                 };
 
@@ -556,6 +556,11 @@ void Viewer::loadMeshes(std::ifstream& file) {
                 .handle = compactedAccelerationStructure,
                 .deviceAddress = compactedAccelerationStructureAddress,
                 .buffer = std::move(compactedAccelerationStructureBuffer),
+                .micromapBuffer = std::move(micromapBuffer),
+                .ommIndexBuffer = std::move(ommIndexBuffer),
+                .ommArrayDataBuffer = std::move(ommArrayDataBuffer),
+                .ommTriangleDataBuffer = std::move(ommTriangleDataBuffer),
+                .micromap = micromap,
             },
             .materialIndex = static_cast<int>(materialIndex),
         });

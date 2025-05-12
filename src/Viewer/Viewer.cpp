@@ -43,9 +43,12 @@ Viewer::Viewer() {
 Viewer::~Viewer() {
     m_device->waitIdle();
 
-    for (const auto& mesh : m_meshes)
+    for (const auto& mesh : m_meshes) {
         if (mesh->accelerationStructure.handle != VK_NULL_HANDLE)
-            vkDestroyAccelerationStructureKHR(m_device->getHandle(), mesh->accelerationStructure.handle, nullptr);
+           vkDestroyAccelerationStructureKHR(m_device->getHandle(), mesh->accelerationStructure.handle, nullptr);
+        if (mesh->accelerationStructure.micromap != VK_NULL_HANDLE)
+            vkDestroyMicromapEXT(m_device->getHandle(), mesh->accelerationStructure.micromap, nullptr);
+    }
     if (m_topLevelAccelerationStructure != VK_NULL_HANDLE)
         vkDestroyAccelerationStructureKHR(m_device->getHandle(), m_topLevelAccelerationStructure, VK_NULL_HANDLE);
     if (m_defaultSampler != VK_NULL_HANDLE)
