@@ -200,6 +200,7 @@ void Viewer::createRaytracingPipeline() {
 
     const VkRayTracingPipelineCreateInfoKHR raytracingPipelineCreateInfo{
         .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+        .flags = VK_PIPELINE_CREATE_RAY_TRACING_OPACITY_MICROMAP_BIT_EXT,
         .stageCount = static_cast<uint32_t>(shaderStages.size()),
         .pStages = shaderStages.data(),
         .groupCount = static_cast<uint32_t>(shaderGroups.size()),

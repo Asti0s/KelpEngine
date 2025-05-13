@@ -237,44 +237,34 @@ void Viewer::loadMeshes(std::ifstream& file) {
                 };
             }
 
-            const VkMicromapBuildInfoEXT micromapSizeInfo = {
+            VkMicromapBuildInfoEXT micromapBuildInfo = {
                 .sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT,
                 .type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT,
+                .flags = VK_BUILD_MICROMAP_PREFER_FAST_TRACE_BIT_EXT,
                 .mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT,
                 .usageCountsCount = static_cast<uint32_t>(usages.size()),
                 .pUsageCounts = usages.data(),
             };
 
             VkMicromapBuildSizesInfoEXT buildSizes = { .sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_SIZES_INFO_EXT };
-            vkGetMicromapBuildSizesEXT(m_device->getHandle(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &micromapSizeInfo, &buildSizes);
-
-
-            // Micromap triangle data
-            std::vector<VkMicromapTriangleEXT> triangleInfoData(bakeResultDesc.descArrayCount);
-            for (uint32_t i = 0; i < bakeResultDesc.descArrayCount; ++i) {
-                triangleInfoData[i] = VkMicromapTriangleEXT{
-                    .dataOffset = bakeResultDesc.descArray[i].offset,
-                    .subdivisionLevel = bakeResultDesc.descArray[i].subdivisionLevel,
-                    .format = bakeResultDesc.descArray[i].format,
-                };
-            }
+            vkGetMicromapBuildSizesEXT(m_device->getHandle(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &micromapBuildInfo, &buildSizes);
 
 
             // Creating buffers
             micromapBuffer = std::make_unique<Buffer>(m_device, buildSizes.micromapSize, VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
             Buffer scratchBuffer = Buffer(m_device, buildSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-            ommArrayDataBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            ommArrayDataBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
             Buffer arrayDataStagingBuffer = Buffer(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
             void *mapped = nullptr;
             arrayDataStagingBuffer.map(&mapped);
             memcpy(mapped, bakeResultDesc.arrayData, bakeResultDesc.arrayDataSize);
             arrayDataStagingBuffer.unmap();
 
-            ommTriangleDataBuffer = std::make_unique<Buffer>(m_device, triangleInfoData.size() * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
-            Buffer triangleDataStagingBuffer = Buffer(m_device, triangleInfoData.size() * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
+            ommTriangleDataBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            Buffer triangleDataStagingBuffer = Buffer(m_device, bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
             triangleDataStagingBuffer.map(&mapped);
-            memcpy(mapped, triangleInfoData.data(), triangleInfoData.size() * sizeof(VkMicromapTriangleEXT));
+            memcpy(mapped, bakeResultDesc.descArray, bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT));
             triangleDataStagingBuffer.unmap();
 
 
@@ -292,39 +282,24 @@ void Viewer::loadMeshes(std::ifstream& file) {
             VK_CHECK(vkCreateMicromapEXT(m_device->getHandle(), &micromapCreateInfo, nullptr, &micromap));
 
 
-            // Micromap build
+            // Uploading data to gpu
             VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
-                // Uploading data to gpu
                 const VkBufferCopy copyRegionArray = { .srcOffset = 0, .dstOffset = 0, .size = bakeResultDesc.arrayDataSize };
                 vkCmdCopyBuffer(commandBuffer, arrayDataStagingBuffer.getHandle(), ommArrayDataBuffer->getHandle(), 1, &copyRegionArray);
 
-                const VkBufferCopy copyRegionTriangle = { .srcOffset = 0, .dstOffset = 0, .size = triangleInfoData.size() * sizeof(VkMicromapTriangleEXT) };
+                const VkBufferCopy copyRegionTriangle = { .srcOffset = 0, .dstOffset = 0, .size = bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT) };
                 vkCmdCopyBuffer(commandBuffer, triangleDataStagingBuffer.getHandle(), ommTriangleDataBuffer->getHandle(), 1, &copyRegionTriangle);
+            }   m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
-                // Ensure the data is ready before building the micromap
-                const VkMemoryBarrier memoryBarrier = {
-                    .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
-                    .srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
-                    .dstAccessMask = VK_ACCESS_SHADER_READ_BIT,
-                };
-                vkCmdPipelineBarrier(commandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 1, &memoryBarrier, 0, nullptr, 0, nullptr);
-
-
-                // Building the micromap
-                const VkMicromapBuildInfoEXT micromapBuildInfo = {
-                    .sType = VK_STRUCTURE_TYPE_MICROMAP_BUILD_INFO_EXT,
-                    .type = VK_MICROMAP_TYPE_OPACITY_MICROMAP_EXT,
-                    .flags = VK_BUILD_MICROMAP_PREFER_FAST_TRACE_BIT_EXT,
-                    .mode = VK_BUILD_MICROMAP_MODE_BUILD_EXT,
-                    .dstMicromap = micromap,
-                    .usageCountsCount = static_cast<uint32_t>(usages.size()),
-                    .pUsageCounts = usages.data(),
-                    .data = { .deviceAddress = ommArrayDataBuffer->getDeviceAddress() },
-                    .scratchData = { .deviceAddress = scratchBuffer.getDeviceAddress() },
-                    .triangleArray = { .deviceAddress = ommTriangleDataBuffer->getDeviceAddress() },
-                    .triangleArrayStride = sizeof(VkMicromapTriangleEXT),
-                };
+            // Micromap build
+            commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+                micromapBuildInfo.flags = VK_BUILD_MICROMAP_PREFER_FAST_TRACE_BIT_EXT;
+                micromapBuildInfo.dstMicromap = micromap;
+                micromapBuildInfo.data = { .deviceAddress = ommArrayDataBuffer->getDeviceAddress() };
+                micromapBuildInfo.scratchData = { .deviceAddress = scratchBuffer.getDeviceAddress() };
+                micromapBuildInfo.triangleArray = { .deviceAddress = ommTriangleDataBuffer->getDeviceAddress() };
+                micromapBuildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
                 vkCmdBuildMicromapsEXT(commandBuffer, 1, &micromapBuildInfo);
             }   m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);

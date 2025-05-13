@@ -381,7 +381,7 @@ void Converter::bakeOpacityMicromaps() {
                 .indexBuffer = mesh.indices.data(),
                 .indexCount = static_cast<uint32_t>(mesh.indices.size()),
                 .alphaCutoff = material.alphaCutoff,
-                .format = omm::Format::OC1_2_State,
+                .format = omm::Format::OC1_4_State,
                 .unknownStatePromotion = omm::UnknownStatePromotion::ForceOpaque,
             };
 
