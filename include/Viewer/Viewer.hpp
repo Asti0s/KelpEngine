@@ -38,9 +38,6 @@ class Viewer {
             VkDeviceAddress deviceAddress;
             Buffer buffer;
             std::unique_ptr<Buffer> micromapBuffer;
-            std::unique_ptr<Buffer> ommIndexBuffer;
-            std::unique_ptr<Buffer> ommArrayDataBuffer;
-            std::unique_ptr<Buffer> ommTriangleDataBuffer;
             VkMicromapEXT micromap;
         };
 

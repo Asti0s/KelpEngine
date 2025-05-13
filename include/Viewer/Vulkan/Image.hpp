@@ -45,7 +45,7 @@ class Image {
         Image& operator=(Image&& other) noexcept;
 
         void cmdTransitionLayout(VkCommandBuffer commandBuffer, const Layout& oldLayout, const Layout& newLayout, uint32_t baseMipLevel = 0, uint32_t levelCount = VK_REMAINING_MIP_LEVELS);
-        void cmdCopyFromBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer);
+        void cmdCopyFromBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer, const VkExtent3D& extent, uint32_t mipLevel = 0);
         void cmdGenerateMipmaps(VkCommandBuffer commandBuffer, const Layout& finalLayout);
         void cmdCopyFromImage(VkCommandBuffer commandBuffer, const Image& srcImage);
 

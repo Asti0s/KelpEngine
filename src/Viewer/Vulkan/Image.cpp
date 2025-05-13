@@ -215,19 +215,19 @@ void Image::cmdGenerateMipmaps(VkCommandBuffer commandBuffer, const Layout& fina
     cmdTransitionLayout(commandBuffer, dstLayout, finalLayout, m_createInfo.mipLevels - 1, 1);
 }
 
-void Image::cmdCopyFromBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer) {
+void Image::cmdCopyFromBuffer(VkCommandBuffer commandBuffer, VkBuffer buffer, const VkExtent3D& extent, uint32_t mipLevel) {
     const VkBufferImageCopy region{
         .bufferOffset = 0,
         .bufferRowLength = 0,
         .bufferImageHeight = 0,
         .imageSubresource = {
             .aspectMask = m_createInfo.aspectFlags,
-            .mipLevel = 0,
+            .mipLevel = mipLevel,
             .baseArrayLayer = 0,
             .layerCount = m_createInfo.arrayLayers
         },
         .imageOffset = {0, 0, 0},
-        .imageExtent = m_createInfo.extent
+        .imageExtent = extent
     };
 
     vkCmdCopyBufferToImage(commandBuffer, buffer, m_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);

@@ -106,6 +106,53 @@ int Converter::processTextureIndex(int originalIndex, std::vector<Texture>& text
     return static_cast<int>(std::distance(textureCollection.begin(), it));
 }
 
+void Converter::generateMipmaps(Texture& texture, int channels) {
+    const MipLevel* previousMip = texture.mipLevels.data();
+
+    while (previousMip->size.x > 1 || previousMip->size.y > 1) {
+        MipLevel nextMip{
+            .size = {
+                std::max(1, previousMip->size.x / 2),
+                std::max(1, previousMip->size.y / 2)
+            },
+        };
+
+        if (static_cast<size_t>(nextMip.size.x) * static_cast<size_t>(nextMip.size.y) * static_cast<size_t>(channels) == 0 && (nextMip.size.x > 0 || nextMip.size.y > 0))
+            break;
+
+        nextMip.data.resize(static_cast<size_t>(nextMip.size.x) * static_cast<size_t>(nextMip.size.y) * static_cast<size_t>(channels));
+
+        for (int y = 0; y < nextMip.size.y; ++y) {
+            for (int x = 0; x < nextMip.size.x; ++x) {
+                for (int c = 0; c < channels; ++c) {
+                    uint32_t sum = 0;
+                    int count = 0;
+
+                    for (int offsetY = 0; offsetY < 2; ++offsetY) {
+                        int prevY = y * 2 + offsetY;
+                        if (prevY >= previousMip->size.y)
+                            continue;
+
+                        for (int offsetX = 0; offsetX < 2; ++offsetX) {
+                            int prevX = x * 2 + offsetX;
+                            if (prevX >= previousMip->size.x)
+                                continue;
+
+                            sum += previousMip->data[static_cast<size_t>(prevY * previousMip->size.x + prevX) * channels + c];
+                            count++;
+                        }
+                    }
+
+                    nextMip.data[static_cast<size_t>(y * nextMip.size.x + x) * channels + c] = static_cast<uint8_t>(sum / count);
+                }
+            }
+        }
+
+        texture.mipLevels.emplace_back(std::move(nextMip));
+        previousMip = &texture.mipLevels.back();
+    }
+}
+
 void Converter::initTextureCollections() {
     // Add all textures to their respective collections and update materials to switch from glTF indices to our own indices
     for (auto& material : m_materials) {
@@ -172,9 +219,15 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
             const fastgltf::Texture& gltfTexture = asset.textures[albedoTexture.gltfIndex];
             const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
 
-            albedoTexture.size = size;
-            albedoTexture.data.resize(static_cast<size_t>(size.x * size.y) * 4);
-            std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 4), albedoTexture.data.begin());
+            // First mip level creation from loaded data
+            albedoTexture.mipLevels.emplace_back(MipLevel{
+                .size = size,
+                .data = std::vector<uint8_t>(static_cast<size_t>(size.x * size.y) * 4),
+            });
+            std::copy(data, data + static_cast<ptrdiff_t>(static_cast<size_t>(size.x * size.y) * 4), albedoTexture.mipLevels[0].data.begin());
+
+            // Generate mipmaps & clean up
+            generateMipmaps(albedoTexture, 4);
             stbi_image_free(data);
         });
     }
@@ -193,20 +246,23 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
                     return texture.gltfIndex == alphaTexture.gltfIndex;
                 });
 
-            if (it == m_albedoTextures.end())
-                throw std::runtime_error("Failed to find alpha texture for glTF index " + std::to_string(alphaTexture.gltfIndex));
+            // Texture first mip level creation from albedo texture
+            const MipLevel& albedoTexture = it->mipLevels[0];
+            alphaTexture.mipLevels.emplace_back(MipLevel{
+                .size = albedoTexture.size,
+                .data = std::vector<uint8_t>(static_cast<size_t>(albedoTexture.size.x * albedoTexture.size.y)),
+            });
 
-            const Texture& albedoTexture = *it;
-            alphaTexture.size = albedoTexture.size;
-            alphaTexture.data.resize(static_cast<size_t>(albedoTexture.size.x) * albedoTexture.size.y);
-
-            // Extract alpha channel
-            for (int y = 0; y < alphaTexture.size.y; ++y) {
-                for (int x = 0; x < alphaTexture.size.x; ++x) {
-                    const size_t index = (y * alphaTexture.size.x) + x;
-                    alphaTexture.data[index] = albedoTexture.data[(index * 4) + 3];
+            // Extracting alpha channel from albedo texture
+            for (int y = 0; y < alphaTexture.mipLevels[0].size.y; ++y) {
+                for (int x = 0; x < alphaTexture.mipLevels[0].size.x; ++x) {
+                    const size_t index = (static_cast<size_t>(y) * alphaTexture.mipLevels[0].size.x) + x;
+                    alphaTexture.mipLevels[0].data[index] = albedoTexture.data[(index * 4) + 3];
                 }
             }
+
+            // Generate mipmaps
+            generateMipmaps(alphaTexture, 1);
         });
     }
 
@@ -216,10 +272,16 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
             const fastgltf::Texture& gltfTexture = asset.textures[normalTexture.gltfIndex];
             const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
 
-            normalTexture.size = size;
-            normalTexture.data.resize(static_cast<size_t>(size.x * size.y) * 4);
-            std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 4), normalTexture.data.begin());
+            // First mip level creation from loaded data
+            normalTexture.mipLevels.emplace_back(MipLevel{
+                .size = size,
+                .data = std::vector<uint8_t>(static_cast<size_t>(size.x * size.y) * 4),
+            });
+            std::copy(data, data + static_cast<ptrdiff_t>(static_cast<size_t>(size.x * size.y) * 4), normalTexture.mipLevels[0].data.begin());
+
+            // Generate mipmaps & clean up
             stbi_image_free(data);
+            generateMipmaps(normalTexture, 4);
         });
     }
 
@@ -229,20 +291,26 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
             const fastgltf::Texture& gltfTexture = asset.textures[metallicRoughnessTexture.gltfIndex];
             const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb);
 
-            // Encode to 2-channel format
-            metallicRoughnessTexture.size = size;
-            metallicRoughnessTexture.data.resize(static_cast<size_t>(size.x * size.y) * 2);
+            // Texture first mip level creation
+            metallicRoughnessTexture.mipLevels.emplace_back(MipLevel{
+                .size = size,
+                .data = std::vector<uint8_t>(static_cast<size_t>(size.x * size.y) * 2),
+            });
+
+            // Extracting metallic and roughness channels from loaded data
             for (int y = 0; y < size.y; ++y) {
                 for (int x = 0; x < size.x; ++x) {
-                    const size_t index = (y * size.x) + x;
+                    const size_t index = (static_cast<size_t>(y) * size.x) + x;
                     const size_t srcIndex = index * 3;
                     const size_t encodedIndex = index * 2;
 
-                    metallicRoughnessTexture.data[encodedIndex] = static_cast<uint8_t>(data[srcIndex]);
-                    metallicRoughnessTexture.data[encodedIndex + 1] = static_cast<uint8_t>(data[srcIndex + 1]);
+                    metallicRoughnessTexture.mipLevels[0].data[encodedIndex] = data[srcIndex];
+                    metallicRoughnessTexture.mipLevels[0].data[encodedIndex + 1] = data[srcIndex + 1];
                 }
             }
 
+            // Generate mipmaps & clean up
+            generateMipmaps(metallicRoughnessTexture, 2);
             stbi_image_free(data);
         });
     }
@@ -253,9 +321,15 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
             const fastgltf::Texture& gltfTexture = asset.textures[emissiveTexture.gltfIndex];
             const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb);
 
-            emissiveTexture.size = size;
-            emissiveTexture.data.resize(static_cast<size_t>(size.x * size.y) * 3);
-            std::copy(data, data + static_cast<ptrdiff_t>(size.x * size.y * 3), emissiveTexture.data.begin());
+            // Texture first mip level creation
+            emissiveTexture.mipLevels.emplace_back(MipLevel{
+                .size = size,
+                .data = std::vector<uint8_t>(static_cast<size_t>(size.x * size.y) * 3),
+            });
+            std::copy(data, data + static_cast<ptrdiff_t>(static_cast<size_t>(size.x * size.y) * 3), emissiveTexture.mipLevels[0].data.begin());
+
+            // Generate mipmaps & clean up
+            generateMipmaps(emissiveTexture, 3);
             stbi_image_free(data);
         });
     }
@@ -350,9 +424,9 @@ void Converter::bakeOpacityMicromaps() {
 
             // OMM texture creation
             const omm::Cpu::TextureMipDesc mipDesc {
-                .width = static_cast<uint32_t>(alphaTexture.size.x),
-                .height = static_cast<uint32_t>(alphaTexture.size.y),
-                .textureData = alphaTexture.data.data(),
+                .width = static_cast<uint32_t>(alphaTexture.mipLevels[0].size.x),
+                .height = static_cast<uint32_t>(alphaTexture.mipLevels[0].size.y),
+                .textureData = alphaTexture.mipLevels[0].data.data(),
             };
 
             const omm::Cpu::TextureDesc texDesc {
@@ -514,36 +588,66 @@ void Converter::convert(const std::filesystem::path& inputFile, const std::files
     const size_t albedoCount = m_albedoTextures.size();
     outFile.write(reinterpret_cast<const char*>(&albedoCount), sizeof(size_t));
     for (const Texture& albedoTexture : m_albedoTextures) {
-        outFile.write(reinterpret_cast<const char*>(&albedoTexture.size), sizeof(glm::ivec2));
-        outFile.write(reinterpret_cast<const char*>(albedoTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * albedoTexture.data.size()));
+        const size_t mipLevelCount = albedoTexture.mipLevels.size();
+        outFile.write(reinterpret_cast<const char*>(&mipLevelCount), sizeof(size_t));
+
+        for (size_t i = 0; i < mipLevelCount; ++i) {
+            const MipLevel& mipLevel = albedoTexture.mipLevels[i];
+            outFile.write(reinterpret_cast<const char*>(&mipLevel.size), sizeof(glm::ivec2));
+            outFile.write(reinterpret_cast<const char*>(mipLevel.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * mipLevel.data.size()));
+        }
     }
 
     const size_t alphaCount = m_alphaTextures.size();
     outFile.write(reinterpret_cast<const char*>(&alphaCount), sizeof(size_t));
     for (const Texture& alphaTexture : m_alphaTextures) {
-        outFile.write(reinterpret_cast<const char*>(&alphaTexture.size), sizeof(glm::ivec2));
-        outFile.write(reinterpret_cast<const char*>(alphaTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * alphaTexture.data.size()));
+        const size_t mipLevelCount = alphaTexture.mipLevels.size();
+        outFile.write(reinterpret_cast<const char*>(&mipLevelCount), sizeof(size_t));
+
+        for (size_t i = 0; i < mipLevelCount; ++i) {
+            const MipLevel& mipLevel = alphaTexture.mipLevels[i];
+            outFile.write(reinterpret_cast<const char*>(&mipLevel.size), sizeof(glm::ivec2));
+            outFile.write(reinterpret_cast<const char*>(mipLevel.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * mipLevel.data.size()));
+        }
     }
 
     const size_t normalCount = m_normalTextures.size();
     outFile.write(reinterpret_cast<const char*>(&normalCount), sizeof(size_t));
     for (const Texture& normalTexture : m_normalTextures) {
-        outFile.write(reinterpret_cast<const char*>(&normalTexture.size), sizeof(glm::ivec2));
-        outFile.write(reinterpret_cast<const char*>(normalTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * normalTexture.data.size()));
+        const size_t mipLevelCount = normalTexture.mipLevels.size();
+        outFile.write(reinterpret_cast<const char*>(&mipLevelCount), sizeof(size_t));
+
+        for (size_t i = 0; i < mipLevelCount; ++i) {
+            const MipLevel& mipLevel = normalTexture.mipLevels[i];
+            outFile.write(reinterpret_cast<const char*>(&mipLevel.size), sizeof(glm::ivec2));
+            outFile.write(reinterpret_cast<const char*>(mipLevel.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * mipLevel.data.size()));
+        }
     }
 
     const size_t metallicRoughnessCount = m_metallicRoughnessTextures.size();
     outFile.write(reinterpret_cast<const char*>(&metallicRoughnessCount), sizeof(size_t));
     for (const Texture& metallicRoughnessTexture : m_metallicRoughnessTextures) {
-        outFile.write(reinterpret_cast<const char*>(&metallicRoughnessTexture.size), sizeof(glm::ivec2));
-        outFile.write(reinterpret_cast<const char*>(metallicRoughnessTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * metallicRoughnessTexture.data.size()));
+        const size_t mipLevelCount = metallicRoughnessTexture.mipLevels.size();
+        outFile.write(reinterpret_cast<const char*>(&mipLevelCount), sizeof(size_t));
+
+        for (size_t i = 0; i < mipLevelCount; ++i) {
+            const MipLevel& mipLevel = metallicRoughnessTexture.mipLevels[i];
+            outFile.write(reinterpret_cast<const char*>(&mipLevel.size), sizeof(glm::ivec2));
+            outFile.write(reinterpret_cast<const char*>(mipLevel.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * mipLevel.data.size()));
+        }
     }
 
     const size_t emissiveCount = m_emissiveTextures.size();
     outFile.write(reinterpret_cast<const char*>(&emissiveCount), sizeof(size_t));
     for (const Texture& emissiveTexture : m_emissiveTextures) {
-        outFile.write(reinterpret_cast<const char*>(&emissiveTexture.size), sizeof(glm::ivec2));
-        outFile.write(reinterpret_cast<const char*>(emissiveTexture.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * emissiveTexture.data.size()));
+        const size_t mipLevelCount = emissiveTexture.mipLevels.size();
+        outFile.write(reinterpret_cast<const char*>(&mipLevelCount), sizeof(size_t));
+
+        for (size_t i = 0; i < mipLevelCount; ++i) {
+            const MipLevel& mipLevel = emissiveTexture.mipLevels[i];
+            outFile.write(reinterpret_cast<const char*>(&mipLevel.size), sizeof(glm::ivec2));
+            outFile.write(reinterpret_cast<const char*>(mipLevel.data.data()), static_cast<std::streamsize>(sizeof(uint8_t) * mipLevel.data.size()));
+        }
     }
 
 

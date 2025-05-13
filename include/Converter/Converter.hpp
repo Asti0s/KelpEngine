@@ -1,19 +1,23 @@
 #pragma once
 
-#include "glm/ext/vector_int2.hpp"
-#include "omm.hpp"
 #include "shared.hpp"
 
 #include "fastgltf/types.hpp"
+#include "glm/ext/vector_int2.hpp"
+#include "omm.hpp"
 
 #include <cstdint>
 #include <filesystem>
 #include <vector>
 
-struct Texture {
+struct MipLevel {
     glm::ivec2 size;
-    int gltfIndex;
     std::vector<uint8_t> data;
+};
+
+struct Texture {
+    int gltfIndex;
+    std::vector<MipLevel> mipLevels;
 };
 
 struct Mesh {
@@ -45,6 +49,7 @@ class Converter {
     private:
         static fastgltf::Asset parseFile(const std::filesystem::path& inputFile);
         static void funcTime(const std::string& context, const std::function<void()>& func);
+        static void generateMipmaps(Texture& texture, int channels);
 
         void loadMaterials(const fastgltf::Asset& asset);
         static int processTextureIndex(int originalIndex, std::vector<Texture>& textureCollection);

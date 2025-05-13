@@ -4,20 +4,18 @@
 #include "Viewer/Vulkan/Device.hpp"
 #include "Viewer/Vulkan/Image.hpp"
 #include "Viewer/Vulkan/Utils.hpp"
-#include "omm.hpp"
 #include "shared.hpp"
 
 #define GLM_ENABLE_EXPERIMENTAL
 #include "fastgltf/types.hpp"
 #include "glm/ext/vector_int2.hpp"
 #include "glm/gtx/string_cast.hpp"
+#include "omm.hpp"
 #include "stb_image.h"
 #include "vk_mem_alloc.h"
 #include <vulkan/vulkan_core.h>
 
-#include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -31,8 +29,8 @@
 #include <vector>
 
 struct TextureMetaData {
-    glm::ivec2 size;
     size_t offset;
+    size_t mipLevelCount;
 };
 
 struct KelpMeshInstance {
@@ -60,12 +58,18 @@ void Viewer::loadAndUploadTextureCollection(const std::filesystem::path& filePat
 
     for (size_t i = 0; i < count; ++i) {
         TextureMetaData& tex = textureMetadata[i];
-        file.read(reinterpret_cast<char*>(&tex.size), sizeof(tex.size));
-        if (tex.size.x <= 0 || tex.size.y <= 0)
-            throw std::runtime_error("Error: Texture size is invalid: " + glm::to_string(tex.size));
-
+        file.read(reinterpret_cast<char*>(&tex.mipLevelCount), sizeof(size_t));
         tex.offset = static_cast<size_t>(file.tellg());
-        file.seekg(static_cast<std::streamsize>(static_cast<size_t>(tex.size.x) * tex.size.y * channelCount), std::ios::cur);
+
+        // Skip the mip levels data
+        for (int j = 0; j < tex.mipLevelCount; j++) {
+            glm::ivec2 mipSize;
+            file.read(reinterpret_cast<char*>(&mipSize), sizeof(glm::ivec2));
+            if (mipSize.x <= 0 || mipSize.y <= 0)
+                throw std::runtime_error("Error: Mip level size is invalid: " + glm::to_string(mipSize));
+
+            file.seekg(static_cast<std::streamsize>(static_cast<size_t>(mipSize.x) * mipSize.y * channelCount), std::ios::cur);
+        }
     }
 
 
@@ -84,35 +88,40 @@ void Viewer::loadAndUploadTextureCollection(const std::filesystem::path& filePat
             file.seekg(static_cast<std::streamsize>(tex.offset), std::ios::beg);
 
 
-            // Read texture data
-            std::vector<uint8_t> textureData(static_cast<size_t>(tex.size.x) * tex.size.y * channelCount);
+            // Read first mip level size
+            glm::ivec2 size;
+            file.read(reinterpret_cast<char*>(&size), sizeof(size));
+            if (size.x <= 0 || size.y <= 0)
+                throw std::runtime_error("Error: Texture size is invalid: " + glm::to_string(size));
+
+
+            // Read first mip level data
+            std::vector<uint8_t> textureData(static_cast<size_t>(size.x) * size.y * channelCount);
             file.read(reinterpret_cast<char*>(textureData.data()), static_cast<std::streamsize>(textureData.size()));
             if (file.gcount() != static_cast<std::streamsize>(textureData.size()))
                 throw std::runtime_error("Error: Texture data read failed");
 
 
             // Image creation
-            uint32_t mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(tex.size.x, tex.size.y)))) + 1;
             const Image::CreateInfo imageCreateInfo{
-                .extent = VkExtent3D{static_cast<uint32_t>(tex.size.x), static_cast<uint32_t>(tex.size.y), 1},
-                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
+                .extent = VkExtent3D{static_cast<uint32_t>(size.x), static_cast<uint32_t>(size.y), 1},
+                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
                 .format = textureFormat,
                 .type = VK_IMAGE_TYPE_2D,
-                .mipLevels = static_cast<uint8_t>(mipLevels),
+                .mipLevels = static_cast<uint8_t>(tex.mipLevelCount),
             };
             const std::shared_ptr<Image> image = std::make_shared<Image>(m_device, imageCreateInfo);
 
 
-            // Staging buffer creation & mapping
-            Buffer stagingBuffer = Buffer(m_device, static_cast<size_t>(tex.size.x * tex.size.y * channelCount), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
-
+            // First mip level staging buffer creation & mapping
+            Buffer stagingBuffer = Buffer(m_device, static_cast<size_t>(size.x * size.y * channelCount), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             void *mappedData = nullptr;
             stagingBuffer.map(&mappedData);
-            memcpy(mappedData, textureData.data(), static_cast<size_t>(tex.size.x) * tex.size.y * channelCount);
+            memcpy(mappedData, textureData.data(), static_cast<size_t>(size.x) * size.y * channelCount);
             stagingBuffer.unmap();
 
 
-            // Data upload to gpu & mipmap generation
+            // Transitionning the whole image to transfer dst and copying the first mip level
             commandMutex.lock();
             VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
                 image->cmdTransitionLayout(commandBuffer, Image::Layout{
@@ -125,9 +134,53 @@ void Viewer::loadAndUploadTextureCollection(const std::filesystem::path& filePat
                     .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
                 });
 
-                image->cmdCopyFromBuffer(commandBuffer, stagingBuffer.getHandle());
+                image->cmdCopyFromBuffer(commandBuffer, stagingBuffer.getHandle(), {
+                    .width = static_cast<uint32_t>(size.x),
+                    .height = static_cast<uint32_t>(size.y),
+                    .depth = 1,
+                }, 0);
+            } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+            commandMutex.unlock();
 
-                image->cmdGenerateMipmaps(commandBuffer, Image::Layout{
+
+            // Reading the rest of the mip levels
+            for (size_t j = 1; j < tex.mipLevelCount; j++) {
+                // Read mip level size
+                file.read(reinterpret_cast<char*>(&size), sizeof(size));
+                if (size.x <= 0 || size.y <= 0)
+                    throw std::runtime_error("Error: Texture size is invalid: " + glm::to_string(size));
+
+                // Read mip level data
+                file.read(reinterpret_cast<char*>(textureData.data()), static_cast<int>(size.x * size.y * channelCount));
+                if (file.gcount() != static_cast<int>(size.x * size.y * channelCount))
+                    throw std::runtime_error("Error: Texture data read failed");
+
+                // Staging buffer creation & mapping
+                stagingBuffer.map(&mappedData);
+                memcpy(mappedData, textureData.data(), static_cast<size_t>(size.x) * size.y * channelCount);
+                stagingBuffer.unmap();
+
+                // Data upload to gpu
+                commandMutex.lock();
+                commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+                    image->cmdCopyFromBuffer(commandBuffer, stagingBuffer.getHandle(), {
+                        .width = static_cast<uint32_t>(size.x),
+                        .height = static_cast<uint32_t>(size.y),
+                        .depth = 1,
+                    }, j);
+                } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
+                commandMutex.unlock();
+            }
+
+
+            // Transitionning the whole image to shader read only
+            commandMutex.lock();
+            commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+                image->cmdTransitionLayout(commandBuffer, Image::Layout{
+                    .layout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    .accessMask = VK_ACCESS_TRANSFER_WRITE_BIT,
+                    .stageFlags = VK_PIPELINE_STAGE_TRANSFER_BIT,
+                }, Image::Layout{
                     .layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
                     .accessMask = VK_ACCESS_SHADER_READ_BIT,
                     .stageFlags = VK_PIPELINE_STAGE_RAY_TRACING_SHADER_BIT_KHR,
@@ -216,8 +269,6 @@ void Viewer::loadMeshes(std::ifstream& file) {
 
         std::unique_ptr<Buffer> micromapBuffer;
         std::unique_ptr<Buffer> ommIndexBuffer;
-        std::unique_ptr<Buffer> ommArrayDataBuffer;
-        std::unique_ptr<Buffer> ommTriangleDataBuffer;
 
         std::vector<VkMicromapUsageEXT> blasOmmUsageCounts;
         VkAccelerationStructureTrianglesOpacityMicromapEXT ommLinkInfo{};
@@ -254,14 +305,14 @@ void Viewer::loadMeshes(std::ifstream& file) {
             micromapBuffer = std::make_unique<Buffer>(m_device, buildSizes.micromapSize, VK_BUFFER_USAGE_MICROMAP_STORAGE_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
             Buffer scratchBuffer = Buffer(m_device, buildSizes.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
-            ommArrayDataBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            Buffer ommArrayDataBuffer = Buffer(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
             Buffer arrayDataStagingBuffer = Buffer(m_device, bakeResultDesc.arrayDataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
             void *mapped = nullptr;
             arrayDataStagingBuffer.map(&mapped);
             memcpy(mapped, bakeResultDesc.arrayData, bakeResultDesc.arrayDataSize);
             arrayDataStagingBuffer.unmap();
 
-            ommTriangleDataBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
+            Buffer ommDescArrayBuffer = Buffer(m_device, bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_MICROMAP_BUILD_INPUT_READ_ONLY_BIT_EXT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, 0, 256);
             Buffer triangleDataStagingBuffer = Buffer(m_device, bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT);
             triangleDataStagingBuffer.map(&mapped);
             memcpy(mapped, bakeResultDesc.descArray, bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT));
@@ -285,10 +336,10 @@ void Viewer::loadMeshes(std::ifstream& file) {
             // Uploading data to gpu
             VkCommandBuffer commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
                 const VkBufferCopy copyRegionArray = { .srcOffset = 0, .dstOffset = 0, .size = bakeResultDesc.arrayDataSize };
-                vkCmdCopyBuffer(commandBuffer, arrayDataStagingBuffer.getHandle(), ommArrayDataBuffer->getHandle(), 1, &copyRegionArray);
+                vkCmdCopyBuffer(commandBuffer, arrayDataStagingBuffer.getHandle(), ommArrayDataBuffer.getHandle(), 1, &copyRegionArray);
 
                 const VkBufferCopy copyRegionTriangle = { .srcOffset = 0, .dstOffset = 0, .size = bakeResultDesc.descArrayCount * sizeof(VkMicromapTriangleEXT) };
-                vkCmdCopyBuffer(commandBuffer, triangleDataStagingBuffer.getHandle(), ommTriangleDataBuffer->getHandle(), 1, &copyRegionTriangle);
+                vkCmdCopyBuffer(commandBuffer, triangleDataStagingBuffer.getHandle(), ommDescArrayBuffer.getHandle(), 1, &copyRegionTriangle);
             }   m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
 
@@ -296,9 +347,9 @@ void Viewer::loadMeshes(std::ifstream& file) {
             commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
                 micromapBuildInfo.flags = VK_BUILD_MICROMAP_PREFER_FAST_TRACE_BIT_EXT;
                 micromapBuildInfo.dstMicromap = micromap;
-                micromapBuildInfo.data = { .deviceAddress = ommArrayDataBuffer->getDeviceAddress() };
+                micromapBuildInfo.data = { .deviceAddress = ommArrayDataBuffer.getDeviceAddress() };
                 micromapBuildInfo.scratchData = { .deviceAddress = scratchBuffer.getDeviceAddress() };
-                micromapBuildInfo.triangleArray = { .deviceAddress = ommTriangleDataBuffer->getDeviceAddress() };
+                micromapBuildInfo.triangleArray = { .deviceAddress = ommDescArrayBuffer.getDeviceAddress() };
                 micromapBuildInfo.triangleArrayStride = sizeof(VkMicromapTriangleEXT);
 
                 vkCmdBuildMicromapsEXT(commandBuffer, 1, &micromapBuildInfo);
@@ -307,12 +358,13 @@ void Viewer::loadMeshes(std::ifstream& file) {
 
             // OMM index buffer
             const VkIndexType indexType = bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? VK_INDEX_TYPE_UINT16 : VK_INDEX_TYPE_UINT32;
+            ommIndexBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.indexCount * (bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
 
             Buffer ommIndexStagingBuffer(m_device, bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? bakeResultDesc.indexCount * sizeof(uint16_t) : bakeResultDesc.indexCount * sizeof(uint32_t), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT);
             ommIndexStagingBuffer.map(&mapped);
             memcpy(mapped, bakeResultDesc.indexBuffer, bakeResultDesc.indexCount * (bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t)));
             ommIndexStagingBuffer.unmap();
-            ommIndexBuffer = std::make_unique<Buffer>(m_device, bakeResultDesc.indexCount * (bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t)), VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT);
+
             commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
                 ommIndexBuffer->copyFrom(commandBuffer, ommIndexStagingBuffer.getHandle(), bakeResultDesc.indexCount * (bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t)));
             } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
@@ -331,7 +383,7 @@ void Viewer::loadMeshes(std::ifstream& file) {
                 .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_TRIANGLES_OPACITY_MICROMAP_EXT,
                 .pNext = nullptr,
                 .indexType = indexType,
-                .indexBuffer = {.deviceAddress = ommIndexBuffer->getDeviceAddress()},
+                .indexBuffer = { .deviceAddress = ommIndexBuffer->getDeviceAddress() },
                 .indexStride = bakeResultDesc.indexFormat == omm::IndexFormat::UINT_16 ? sizeof(uint16_t) : sizeof(uint32_t),
                 .baseTriangle = 0,
                 .usageCountsCount = static_cast<uint32_t>(blasOmmUsageCounts.size()),
@@ -407,10 +459,10 @@ void Viewer::loadMeshes(std::ifstream& file) {
                     },
                 },
             },
-            .flags = static_cast<VkGeometryFlagsKHR>(static_cast<fastgltf::AlphaMode>(m_materials[materialIndex].alphaMode) == fastgltf::AlphaMode::Opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : 0),
+            .flags = static_cast<VkGeometryFlagsKHR>(static_cast<fastgltf::AlphaMode>(m_materials[materialIndex].alphaMode) == fastgltf::AlphaMode::Opaque ? VK_GEOMETRY_OPAQUE_BIT_KHR : VK_GEOMETRY_NO_DUPLICATE_ANY_HIT_INVOCATION_BIT_KHR),
         };
 
-        const VkAccelerationStructureBuildGeometryInfoKHR accelerationStructureBuildGeometryInfo{
+        VkAccelerationStructureBuildGeometryInfoKHR accelerationBuildGeometryInfo{
             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
             .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
             .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR,
@@ -423,7 +475,7 @@ void Viewer::loadMeshes(std::ifstream& file) {
             .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_SIZES_INFO_KHR,
         };
 
-        vkGetAccelerationStructureBuildSizesKHR(m_device->getHandle(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &accelerationStructureBuildGeometryInfo, &numTriangles, &accelerationStructureBuildSizesInfo);
+        vkGetAccelerationStructureBuildSizesKHR(m_device->getHandle(), VK_ACCELERATION_STRUCTURE_BUILD_TYPE_DEVICE_KHR, &accelerationBuildGeometryInfo, &numTriangles, &accelerationStructureBuildSizesInfo);
 
 
         // Acceleration structure creation
@@ -442,19 +494,6 @@ void Viewer::loadMeshes(std::ifstream& file) {
         // Acceleration structure build
         const Buffer scratchBuffer = Buffer(m_device, accelerationStructureBuildSizesInfo.buildScratchSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_STORAGE_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT);
 
-        const VkAccelerationStructureBuildGeometryInfoKHR accelerationBuildGeometryInfo{
-            .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_BUILD_GEOMETRY_INFO_KHR,
-            .type = VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR,
-            .flags = VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_TRACE_BIT_KHR | VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_COMPACTION_BIT_KHR,
-            .mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
-            .dstAccelerationStructure = originAccelerationStructure,
-            .geometryCount = 1,
-            .pGeometries = &accelerationStructureGeometry,
-            .scratchData {
-                .deviceAddress = scratchBuffer.getDeviceAddress(),
-            },
-        };
-
         VkAccelerationStructureBuildRangeInfoKHR accelerationStructureBuildRangeInfo{
             .primitiveCount = numTriangles,
             .primitiveOffset = 0,
@@ -464,6 +503,10 @@ void Viewer::loadMeshes(std::ifstream& file) {
         std::vector<VkAccelerationStructureBuildRangeInfoKHR*> accelerationBuildStructureRangeInfos = { &accelerationStructureBuildRangeInfo };
 
         commandBuffer = m_device->beginSingleTimeCommands(Device::QueueType::Graphics); {
+            accelerationBuildGeometryInfo.mode = VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR,
+            accelerationBuildGeometryInfo.dstAccelerationStructure = originAccelerationStructure,
+            accelerationBuildGeometryInfo.scratchData = { .deviceAddress = scratchBuffer.getDeviceAddress() };
+
             vkCmdBuildAccelerationStructuresKHR(commandBuffer, 1, &accelerationBuildGeometryInfo, accelerationBuildStructureRangeInfos.data());
         } m_device->endSingleTimeCommands(Device::QueueType::Graphics, commandBuffer);
 
@@ -532,9 +575,6 @@ void Viewer::loadMeshes(std::ifstream& file) {
                 .deviceAddress = compactedAccelerationStructureAddress,
                 .buffer = std::move(compactedAccelerationStructureBuffer),
                 .micromapBuffer = std::move(micromapBuffer),
-                .ommIndexBuffer = std::move(ommIndexBuffer),
-                .ommArrayDataBuffer = std::move(ommArrayDataBuffer),
-                .ommTriangleDataBuffer = std::move(ommTriangleDataBuffer),
                 .micromap = micromap,
             },
             .materialIndex = static_cast<int>(materialIndex),
