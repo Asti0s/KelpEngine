@@ -89,7 +89,7 @@ int Converter::processTextureIndex(int originalIndex, std::vector<Texture>& text
         return -1;
 
     // Find if a texture with the same glTF index already exists in the collection
-    auto it = std::find_if(textureCollection.begin(), textureCollection.end(),
+    auto it = std::ranges::find_if(textureCollection,
         [originalIndex](const Texture& texture) {
             return texture.gltfIndex == originalIndex;
         });
@@ -109,11 +109,11 @@ int Converter::processTextureIndex(int originalIndex, std::vector<Texture>& text
 void Converter::generateMipmaps(Texture& texture, int channels) {
     const MipLevel* previousMip = texture.mipLevels.data();
 
-    while (previousMip->size.x > 1 || previousMip->size.y > 1) {
+    while (previousMip->size.x > 16 || previousMip->size.y > 16) {
         MipLevel nextMip{
             .size = {
-                std::max(1, previousMip->size.x / 2),
-                std::max(1, previousMip->size.y / 2)
+                std::max(16, previousMip->size.x / 2),
+                std::max(16, previousMip->size.y / 2)
             },
         };
 
@@ -129,21 +129,21 @@ void Converter::generateMipmaps(Texture& texture, int channels) {
                     int count = 0;
 
                     for (int offsetY = 0; offsetY < 2; ++offsetY) {
-                        int prevY = y * 2 + offsetY;
+                        int prevY = (y * 2) + offsetY;
                         if (prevY >= previousMip->size.y)
                             continue;
 
                         for (int offsetX = 0; offsetX < 2; ++offsetX) {
-                            int prevX = x * 2 + offsetX;
+                            int prevX = (x * 2) + offsetX;
                             if (prevX >= previousMip->size.x)
                                 continue;
 
-                            sum += previousMip->data[static_cast<size_t>(prevY * previousMip->size.x + prevX) * channels + c];
+                            sum += previousMip->data[(static_cast<size_t>((prevY * previousMip->size.x) + prevX) * channels) + c];
                             count++;
                         }
                     }
 
-                    nextMip.data[static_cast<size_t>(y * nextMip.size.x + x) * channels + c] = static_cast<uint8_t>(sum / count);
+                    nextMip.data[(static_cast<size_t>((y * nextMip.size.x) + x) * channels) + c] = static_cast<uint8_t>(sum / count);
                 }
             }
         }
@@ -423,16 +423,19 @@ void Converter::bakeOpacityMicromaps() {
 
 
             // OMM texture creation
-            const omm::Cpu::TextureMipDesc mipDesc {
-                .width = static_cast<uint32_t>(alphaTexture.mipLevels[0].size.x),
-                .height = static_cast<uint32_t>(alphaTexture.mipLevels[0].size.y),
-                .textureData = alphaTexture.mipLevels[0].data.data(),
-            };
+            std::vector<omm::Cpu::TextureMipDesc> mipDescs(alphaTexture.mipLevels.size());
+            for (size_t i = 0; i < alphaTexture.mipLevels.size(); i++) {
+                mipDescs[i] = {
+                    .width = static_cast<uint32_t>(alphaTexture.mipLevels[i].size.x),
+                    .height = static_cast<uint32_t>(alphaTexture.mipLevels[i].size.y),
+                    .textureData = alphaTexture.mipLevels[i].data.data(),
+                };
+            }
 
             const omm::Cpu::TextureDesc texDesc {
                 .format = omm::Cpu::TextureFormat::UNORM8,
-                .mips = &mipDesc,
-                .mipCount = 1,
+                .mips = mipDescs.data(),
+                .mipCount = static_cast<uint32_t>(mipDescs.size()),
                 .alphaCutoff = material.alphaCutoff,
             };
 
