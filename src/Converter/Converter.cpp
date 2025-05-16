@@ -109,11 +109,11 @@ int Converter::processTextureIndex(int originalIndex, std::vector<Texture>& text
 void Converter::generateMipmaps(Texture& texture, int channels) {
     const MipLevel* previousMip = texture.mipLevels.data();
 
-    while (previousMip->size.x > 16 || previousMip->size.y > 16) {
+    while (previousMip->size.x > 1 || previousMip->size.y > 1) {
         MipLevel nextMip{
             .size = {
-                std::max(16, previousMip->size.x / 2),
-                std::max(16, previousMip->size.y / 2)
+                std::max(1, previousMip->size.x / 2),
+                std::max(1, previousMip->size.y / 2)
             },
         };
 
