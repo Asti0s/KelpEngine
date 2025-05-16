@@ -319,17 +319,17 @@ void Converter::loadTextures(fastgltf::Asset& asset, const std::filesystem::path
     for (Texture& emissiveTexture : m_emissiveTextures) {
         threads.emplace_back([&]() {
             const fastgltf::Texture& gltfTexture = asset.textures[emissiveTexture.gltfIndex];
-            const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb);
+            const auto [size, data] = loadTexture(asset, inputFile, gltfTexture, STBI_rgb_alpha);
 
             // Texture first mip level creation
             emissiveTexture.mipLevels.emplace_back(MipLevel{
                 .size = size,
-                .data = std::vector<uint8_t>(static_cast<size_t>(size.x * size.y) * 3),
+                .data = std::vector<uint8_t>(static_cast<size_t>(size.x * size.y) * 4),
             });
-            std::copy(data, data + static_cast<ptrdiff_t>(static_cast<size_t>(size.x * size.y) * 3), emissiveTexture.mipLevels[0].data.begin());
+            std::copy(data, data + static_cast<ptrdiff_t>(static_cast<size_t>(size.x * size.y) * 4), emissiveTexture.mipLevels[0].data.begin());
 
             // Generate mipmaps & clean up
-            generateMipmaps(emissiveTexture, 3);
+            generateMipmaps(emissiveTexture, 4);
             stbi_image_free(data);
         });
     }
@@ -411,7 +411,7 @@ void Converter::bakeOpacityMicromaps() {
 
 
     for (auto& mesh: m_meshes) {
-        const Material& material = m_materials.at(mesh.materialIndex);
+        Material& material = m_materials.at(mesh.materialIndex);
 
         if (material.alphaMode != static_cast<int>(fastgltf::AlphaMode::Opaque) && material.alphaTexture != -1) {
             const Texture& alphaTexture = m_alphaTextures[material.alphaTexture];
@@ -473,10 +473,15 @@ void Converter::bakeOpacityMicromaps() {
                 throw std::runtime_error("Failed to get OMM bake result: " + std::to_string(static_cast<int>(res)));
 
 
-            // Adding to the list for serialization
-            mesh.ommIndex = static_cast<int>(bakeResultDescs.size());
-            bakeResultDescs.emplace_back(*bakeResultDesc);
-            bakeResults.emplace_back(bakeResultHandle);
+            // Adding the micromap to the list for serialization or destroying it if the material is finally opaque
+            if (bakeResultDesc->arrayDataSize == 0) {
+                material.alphaMode = static_cast<int>(fastgltf::AlphaMode::Opaque);
+                res = omm::Cpu::DestroyBakeResult(bakeResultHandle);
+            } else {
+                mesh.ommIndex = static_cast<int>(bakeResultDescs.size());
+                bakeResultDescs.emplace_back(*bakeResultDesc);
+                bakeResults.emplace_back(bakeResultHandle);
+            }
 
 
             // Clean up
